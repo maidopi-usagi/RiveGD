@@ -8,6 +8,101 @@ env = SConscript("third-party/godot-cpp/SConstruct")
 
 # --- Rive Setup ---
 rive_dir = os.path.abspath("third-party/rive-runtime/")
+
+# --- Preprocess Generated Shaders (Fix C2026) ---
+import tempfile
+import shutil
+import re
+
+def preprocess_generated_shaders(env, rive_dir):
+    # Target directory containing the problematic headers
+    generated_shaders_dir = os.path.join(rive_dir, "renderer", "include", "generated", "shaders")
+    if not os.path.exists(generated_shaders_dir):
+        return
+
+    # Create a temporary directory for the modified headers
+    # We use a consistent path in temp to avoid clutter, but ensure it's fresh
+    temp_base = os.path.join(tempfile.gettempdir(), "rivegd_shader_fix")
+    if os.path.exists(temp_base):
+        try:
+            shutil.rmtree(temp_base)
+        except OSError:
+            pass # Might be in use, but we try our best
+    
+    # We need to preserve the include structure: generated/shaders/...
+    # So if we add temp_base to CPPPATH, we need the files to be in temp_base/generated/shaders
+    target_dir = os.path.join(temp_base, "generated", "shaders")
+    
+    print(f"RIVE: Pre-processing generated shaders to {target_dir} to fix C2026...")
+    
+    def convert_raw_string_to_hex_array(content):
+        # Regex to match: const char name[] = R"delimiter(content)delimiter";
+        # We capture the name, the delimiter, and the content.
+        # We use re.DOTALL so . matches newlines.
+        pattern = r'(?:static\s+)?const\s+char\s+(\w+)\[\]\s*=\s*R"([^"(]*)\((.*?)\)\2";'
+        
+        def replacer(match):
+            name = match.group(1)
+            body = match.group(3)
+            
+            # Convert string to bytes (UTF-8)
+            bytes_data = body.encode('utf-8')
+            
+            # Convert to hex strings
+            hex_values = [f"0x{b:02x}" for b in bytes_data]
+            hex_values.append("0x00") # Null terminator
+            
+            # Format with line breaks to be readable/safe
+            lines = []
+            chunk_size = 16 # 16 bytes per line
+            for i in range(0, len(hex_values), chunk_size):
+                lines.append(", ".join(hex_values[i:i+chunk_size]))
+            
+            array_body = ",\n".join(lines)
+            
+            # Reconstruct as char array initialization
+            return f"const char {name}[] = {{\n{array_body}\n}};"
+
+        return re.sub(pattern, replacer, content, flags=re.DOTALL)
+
+    for root, dirs, files in os.walk(generated_shaders_dir):
+        rel_path = os.path.relpath(root, generated_shaders_dir)
+        dest_root = os.path.join(target_dir, rel_path)
+        if not os.path.exists(dest_root):
+            os.makedirs(dest_root)
+            
+        for f in files:
+            if f.endswith(".h") or f.endswith(".hpp") or f.endswith(".glsl"):
+                src_file = os.path.join(root, f)
+                dst_file = os.path.join(dest_root, f)
+                
+                try:
+                    with open(src_file, 'r', encoding='utf-8', errors='ignore') as fin:
+                        content = fin.read()
+                    
+                    # Apply the conversion
+                    new_content = convert_raw_string_to_hex_array(content)
+                    
+                    # If no change (no raw string found), we still write it out 
+                    # because we need the file to exist in the include path override.
+                    
+                    with open(dst_file, 'w', encoding='utf-8') as fout:
+                        fout.write(new_content)
+                except Exception as e:
+                    print(f"Warning: Failed to process {src_file}: {e}")
+
+    # Prepend the temp directory to include paths so modified files are found first
+    # Note: We prepend 'temp_base' because the includes are likely <generated/shaders/file.h>
+    # and our files are at temp_base/generated/shaders/file.h
+    # However, rive_dir/renderer/include contains 'generated'.
+    # So if we include "generated/shaders/...", we need to add temp_base to path?
+    # No, if the original path is .../renderer/include, and it contains generated/shaders/...
+    # Then #include "generated/shaders/..." works.
+    # So we need to add temp_base to CPPPATH.
+    env.Prepend(CPPPATH=[temp_base])
+
+preprocess_generated_shaders(env, rive_dir)
+
 env.Append(CPPPATH=[
     os.path.abspath("src/"),
     os.path.join(rive_dir, "include"),
