@@ -120,8 +120,7 @@ if env["platform"] == "macos":
     env.Append(FRAMEWORKS=["Metal", "Foundation", "QuartzCore", "AppKit"])
     env.Append(LINKFLAGS=["-framework", "Metal", "-framework", "Foundation", "-framework", "QuartzCore", "-framework", "AppKit"])
     env.Append(CPPDEFINES=["RIVE_METAL"])
-
-if env["platform"] in ["windows", "linuxbsd", "android"]:
+elif env["platform"] in ["windows", "linuxbsd", "android"]:
     env.Append(CPPDEFINES=["RIVE_VULKAN", "RIVE_UPSTREAM_VULKAN_IMPL", "VULKAN_ENABLED"])
     if env["platform"] == "windows":
         vulkan_sdk = os.environ.get("VULKAN_SDK")
@@ -133,38 +132,38 @@ if env["platform"] in ["windows", "linuxbsd", "android"]:
             env.Append(LIBPATH=[os.path.join(vulkan_sdk, "Lib")])
             env.Append(LIBS=["vulkan-1"])
 
-if env["platform"] == "windows":
-    env.Append(CPPDEFINES=["RIVE_D3D12", "D3D12_ENABLED"])
-    env.Append(CXXFLAGS=["/std:c++20"])
-    env.Append(LIBS=["d3d12", "dxgi", "dxguid", "d3dcompiler", "opengl32"])
+        # D3D12 configuration (Windows only)
+        env.Append(CPPDEFINES=["RIVE_D3D12", "D3D12_ENABLED"])
+        env.Append(CXXFLAGS=["/std:c++20"])
+        env.Append(LIBS=["d3d12", "dxgi", "dxguid", "d3dcompiler", "opengl32"])
 
-    # Prioritize Godot build deps for D3DX12
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if local_app_data:
-        godot_d3d_deps = os.path.join(local_app_data, "Godot", "build_deps", "agility_sdk", "build", "native", "include", "d3dx12")
-        if os.path.exists(godot_d3d_deps):
-            print(f"RIVE: Using Godot D3D deps from {godot_d3d_deps}")
-            env.Append(CPPPATH=[godot_d3d_deps])
+        # Prioritize Godot build deps for D3DX12
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            godot_d3d_deps = os.path.join(local_app_data, "Godot", "build_deps", "agility_sdk", "build", "native", "include", "d3dx12")
+            if os.path.exists(godot_d3d_deps):
+                print(f"RIVE: Using Godot D3D deps from {godot_d3d_deps}")
+                env.Append(CPPPATH=[godot_d3d_deps])
 
-    # Add support for external DirectX Headers via env var
-    # Matches logic in rive/SCsub but using env vars instead of local paths
-    dx_headers = os.environ.get("DIRECTX_HEADERS_PATH")
-    if dx_headers:
-        print(f"RIVE: Using DirectX Headers from {dx_headers}")
-        # Assuming the user points to the root of the DirectX-Headers repo or install
-        # We add likely subpaths to cover different structures
-        env.Append(CPPPATH=[
-            dx_headers,
-            os.path.join(dx_headers, "include"),
-            os.path.join(dx_headers, "include", "directx"),
-            os.path.join(dx_headers, "include", "dxguids")
-        ])
-    
-    # Add support for D3D12MA via env var
-    d3d12ma_path = os.environ.get("D3D12MA_PATH")
-    if d3d12ma_path:
-        print(f"RIVE: Using D3D12MA from {d3d12ma_path}")
-        env.Append(CPPPATH=[d3d12ma_path])
+        # Add support for external DirectX Headers via env var
+        # Matches logic in rive/SCsub but using env vars instead of local paths
+        dx_headers = os.environ.get("DIRECTX_HEADERS_PATH")
+        if dx_headers:
+            print(f"RIVE: Using DirectX Headers from {dx_headers}")
+            # Assuming the user points to the root of the DirectX-Headers repo or install
+            # We add likely subpaths to cover different structures
+            env.Append(CPPPATH=[
+                dx_headers,
+                os.path.join(dx_headers, "include"),
+                os.path.join(dx_headers, "include", "directx"),
+                os.path.join(dx_headers, "include", "dxguids")
+            ])
+        
+        # Add support for D3D12MA via env var
+        d3d12ma_path = os.environ.get("D3D12MA_PATH")
+        if d3d12ma_path:
+            print(f"RIVE: Using D3D12MA from {d3d12ma_path}")
+            env.Append(CPPPATH=[d3d12ma_path])
 
 # Collect Rive sources
 rive_sources = []
@@ -176,6 +175,9 @@ dirs_to_scan = [
 exclude_dir_names = {'d3d', 'd3d11', 'd3d12', 'vulkan', 'webgpu', 'dawn', 'android', 'ios'}
 if env["platform"] != "macos":
     exclude_dir_names.add('metal')
+else:
+    # macOS: explicitly exclude all D3D directories
+    exclude_dir_names.update({'d3d', 'd3d11', 'd3d12'})
 
 if env["platform"] in ["windows", "linuxbsd", "android"]:
     if 'vulkan' in exclude_dir_names: exclude_dir_names.remove('vulkan')
@@ -206,6 +208,25 @@ sources = Glob("src/*.cpp")
 sources += Glob("src/patches/*.cpp")
 if env["platform"] == "macos":
     sources += Glob("src/*.mm")
+
+# On macOS exclude D3D12 renderer source(s) that live in the project `src/` directory.
+# This prevents compilation of files that include DirectX headers on macOS.
+if env["platform"] == "macos":
+    def _basename(node):
+        try:
+            return os.path.basename(str(node))
+        except Exception:
+            return str(node)
+
+    d3d_excludes = {"rive_renderer_d3d12.cpp", "rive_renderer_d3d12.mm", "rive_renderer_d3d12.c"}
+    filtered_sources = []
+    for s in sources:
+        name = _basename(s)
+        if name in d3d_excludes:
+            print(f"RIVE: Excluding {name} on macOS")
+            continue
+        filtered_sources.append(s)
+    sources = filtered_sources
 
 sources += rive_sources
 sources.append(os.path.join(rive_dir, "renderer", "glad", "glad_custom.c"))
