@@ -1,0 +1,6 @@
+[submodule "third-party/rive-runtime"]
+	path = third-party/rive-runtime
+	url = https://github.com/rive-app/rive-runtime
+[submodule "third-party/godot-cpp"]
+	path = third-party/godot-cpp
+	url = https://github.com/godotengine/godot-cpp

@@ -1,0 +1,19 @@
+[configuration]
+
+entry_symbol = "gdextension_init"
+compatibility_minimum = 4.3
+
+[libraries]
+
+linux.debug.x86_64 = "bin/libgodot-rive.linux.debug.x86_64.so"
+linux.release.x86_64 = "bin/libgodot-rive.linux.release.x86_64.so"
+linux.debug.arm64 = "bin/libgodot-rive.linux.debug.arm64.so"
+linux.release.arm64 = "bin/libgodot-rive.linux.release.arm64.so"
+linux.debug.rv64 = "bin/libgodot-rive.linux.debug.rv64.so"
+linux.release.rv64 = "bin/libgodot-rive.linux.release.rv64.so"
+windows.debug.x86_64 = "bin/libgodot-rive.windows.debug.x86_64.dll"
+windows.release.x86_64 = "bin/libgodot-rive.windows.release.x86_64.dll"
+macos.debug = "bin/libgodot-rive.macos.debug.framework/libgodot-rive.macos.debug"
+macos.release = "bin/libgodot-rive.macos.release.framework"
+android.debug.arm64 = "bin/libgodot-rive.android.debug.arm64.so"
+android.release.arm64 = "bin/libgodot-rive.android.release.arm64.so"
