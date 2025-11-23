@@ -1,18 +1,31 @@
 # RiveGD
 
-Rive runtime for Godot 4 as a GDExtension. Using Rive Renderer as rendering backend instead of CPU approaches with Skia. Artboards are directly rendered into an Texture2DRD.
+An **unofficial** Rive runtime with hardware accelerated GPU Renderer for Godot 4 as a GDExtension. Implemented Rive Renderer as rendering backend instead of CPU approaches with Skia. Artboards are directly rendered into an Texture.
+
+## Usage
+
+This extension is still highly WIP.
+
+DO NOT USE IN PRODUCTION as APIs will change and stability is not tested well.
+
+So far there's only a basic RiveViewer Control Node implemented. Just create and load a file and use it as a regular ui panel.
+
+More functionality in the Rive Runtime will be add later.
 
 ## Limitations
 
 - **Not tested on:** Linux/Android/iOS
-- **OpenGL backend:** Not implemented yet.
+- **OpenGL backend:** Godot uses OpenGL3 while Rive needs 4+. Applied a small patch upon official repo to support OpenGL3
 
 
 ## Building from Source
 
 ### Prerequisites
 
-- [Godot 4.3+](https://godotengine.org/)
+- [Godot 4.5+](https://godotengine.org/)
+   
+   - Note that DirectX12 Backend works incorrectly on 4.5 for some reason, while 4.6 is fine.
+
 - [SCons](https://scons.org/)
 - [Python 3](https://www.python.org/)
 - C++ Compiler (Clang, GCC, or MSVC)
