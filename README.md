@@ -20,7 +20,9 @@ More functionality in the Rive Runtime will be add later.
 
 - **Not tested on:** Linux/Android/iOS
 - **OpenGL backend:** Godot uses OpenGL3 while Rive needs 4+. Applied a small patch upon official repo to support OpenGL3
-- **MoltenVK:** Seems that MoltenVK is missing some features, rendered texture is blotchy. Please use Metal or OpenGL3 on MacOS
+   - MacOS doesn't support native GLES fallback so cannot work on MacOS right now. I'll looking into this when I have time, maybe fallback to ANGLE when ANGLE backend got fixed.
+   - ANGLE Backend: Godot official builds links ANGLE statically. I can only make it work using dynamic-linked libEGL and libGLESv2.
+- **MoltenVK:** Seems that MoltenVK is missing some features, rendered texture is blotchy. Please use Metal on MacOS.
 
 ## Building from Source
 
