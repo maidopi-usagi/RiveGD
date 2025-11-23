@@ -1,7 +1,5 @@
 # RiveGD
 
-<video src="https://raw.githubusercontent.com/maidopi-usagi/RiveGD/main/media/01.mp4" controls width="640">Your browser does not support the video tag. <a href="https://raw.githubusercontent.com/maidopi-usagi/RiveGD/main/media/01.mp4">Download video</a></video>
-
 Rive runtime for Godot 4 as a GDExtension. Using Rive Renderer as rendering backend instead of CPU approaches with Skia. Artboards are directly rendered into an Texture2DRD.
 
 ## Limitations
