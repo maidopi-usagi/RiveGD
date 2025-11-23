@@ -47,7 +47,7 @@ More functionality in the Rive Runtime will be add later.
 
 1. **Clone the repository** (including submodules):
    ```bash
-   git clone --recursive https://github.com/maidopi-usagi/godot-rive.git
+   git clone --recursive https://github.com/maidopi-usagi/RiveGD.git
    cd godot-rive
    ```
 
