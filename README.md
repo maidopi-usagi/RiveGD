@@ -4,7 +4,8 @@ Rive runtime for Godot 4 as a GDExtension. Using Rive Renderer as rendering back
 
 ## Limitations
 
-- **Vulkan backend:** Work in progress — currently not supported due to Godot doesn't expose vkGetInstanceProcAddr.
+- **Vulkan backend:** Work in progress.
+- **D3D12 backend:** Work in progress.
 - **OpenGL backend:** Not implemented yet.
 
 
@@ -16,10 +17,15 @@ Rive runtime for Godot 4 as a GDExtension. Using Rive Renderer as rendering back
 - [SCons](https://scons.org/)
 - [Python 3](https://www.python.org/)
 - C++ Compiler (Clang, GCC, or MSVC)
+- **Vulkan SDK**: Ensure `VULKAN_SDK` environment variable is set.
+- **Windows (D3D12)**:
+    - **DirectX Headers**: The build system looks for `d3dx12.h`. It automatically checks:
+        - `%LOCALAPPDATA%\Godot\build_deps\agility_sdk\build\native\include\d3dx12` (Standard Godot build dep location)
+        - Or set `DIRECTX_HEADERS_PATH` environment variable.
+    - **Shader Compiler**: `fxc` (from Windows SDK) must be in your PATH or standard location.
 - Shader compilation tools:
     - **Vulkan**: `glslangValidator` and `spirv-opt` (from Vulkan SDK)
     - **macOS (Metal)**: Xcode Command Line Tools (`xcrun`)
-    - **Windows (D3D)**: `fxc` (from Windows SDK)
 
 ### Build Steps
 
