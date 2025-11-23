@@ -2,6 +2,10 @@
 
 An **unofficial** Rive runtime with hardware accelerated GPU Renderer for Godot 4 as a GDExtension. Implemented Rive Renderer as rendering backend instead of CPU approaches with Skia. Artboards are directly rendered into an Texture.
 
+
+https://github.com/user-attachments/assets/615cefe9-f9ba-4821-b8d4-bf70510b7d0c
+
+
 ## Usage
 
 This extension is still highly WIP.
