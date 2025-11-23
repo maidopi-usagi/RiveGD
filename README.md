@@ -20,7 +20,7 @@ More functionality in the Rive Runtime will be add later.
 
 - **Not tested on:** Linux/Android/iOS
 - **OpenGL backend:** Godot uses OpenGL3 while Rive needs 4+. Applied a small patch upon official repo to support OpenGL3
-
+- **MoltenVK:** Seems that MoltenVK is missing some features, rendered texture is blotchy. Please use Metal or OpenGL3 on MacOS
 
 ## Building from Source
 
