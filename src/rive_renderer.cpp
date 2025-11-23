@@ -23,36 +23,44 @@ bool create_metal_context(RenderingDevice* rd);
 void render_texture_metal(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height);
 #endif
 
+#if defined(RIVE_DESKTOP_GL)
+bool create_opengl_context();
+void render_texture_opengl(RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height);
+#endif
+
 void initialize_rive_renderer() {
     RenderingServer *rs = RenderingServer::get_singleton();
     if (!rs) return;
 
     RenderingDevice *rd = rs->get_rendering_device();
-    if (!rd) {
-        UtilityFunctions::printerr("Rive: RenderingDevice not available.");
-        return;
-    }
+    // rd can be null for OpenGL
 
     String api = rs->get_current_rendering_driver_name();
     bool success = false;
 
     if (api == "vulkan") {
 #if defined(VULKAN_ENABLED)
-        success = create_vulkan_context(rd);
+        if (rd) success = create_vulkan_context(rd);
 #else
         UtilityFunctions::printerr("Rive: Vulkan support not compiled in.");
 #endif
     } else if (api == "d3d12") {
 #if defined(D3D12_ENABLED)
-        success = create_d3d12_context(rd);
+        if (rd) success = create_d3d12_context(rd);
 #else
         UtilityFunctions::printerr("Rive: D3D12 support not compiled in.");
 #endif
     } else if (api == "metal") {
 #if defined(__APPLE__)
-        success = create_metal_context(rd);
+        if (rd) success = create_metal_context(rd);
 #else
         UtilityFunctions::printerr("Rive: Metal support not compiled in.");
+#endif
+    } else if (api == "opengl3") {
+#if defined(RIVE_DESKTOP_GL)
+        success = create_opengl_context();
+#else
+        UtilityFunctions::printerr("Rive: OpenGL support not compiled in.");
 #endif
     } else {
         UtilityFunctions::printerr("Rive: Unsupported graphics API: " + api);
@@ -66,8 +74,6 @@ void initialize_rive_renderer() {
 }
 
 void render_texture(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height) {
-    if (!rd) return;
-    
     RenderingServer *rs = RenderingServer::get_singleton();
     if (!rs) return;
     
@@ -75,15 +81,19 @@ void render_texture(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable
     
     if (api == "vulkan") {
 #if defined(VULKAN_ENABLED)
-        render_texture_vulkan(rd, texture_rid, drawable, width, height);
+        if (rd) render_texture_vulkan(rd, texture_rid, drawable, width, height);
 #endif
     } else if (api == "d3d12") {
 #if defined(D3D12_ENABLED)
-        render_texture_d3d12(rd, texture_rid, drawable, width, height);
+        if (rd) render_texture_d3d12(rd, texture_rid, drawable, width, height);
 #endif
     } else if (api == "metal") {
 #if defined(__APPLE__)
-        render_texture_metal(rd, texture_rid, drawable, width, height);
+        if (rd) render_texture_metal(rd, texture_rid, drawable, width, height);
+#endif
+    } else if (api == "opengl3") {
+#if defined(RIVE_DESKTOP_GL)
+        render_texture_opengl(texture_rid, drawable, width, height);
 #endif
     }
 }

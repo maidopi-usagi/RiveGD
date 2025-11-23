@@ -109,9 +109,11 @@ env.Append(CPPPATH=[
     rive_dir,
     os.path.join(rive_dir, "renderer"),
     os.path.join(rive_dir, "renderer", "src"),
-    os.path.join(rive_dir, "renderer", "include")
+    os.path.join(rive_dir, "renderer", "include"),
+    os.path.join(rive_dir, "renderer", "glad", "include"),
+    os.path.join(rive_dir, "renderer", "glad")
 ])
-env.Append(CPPDEFINES=['_RIVE_INTERNAL_'])
+env.Append(CPPDEFINES=['_RIVE_INTERNAL_', 'RIVE_DESKTOP_GL'])
 
 # Platform specific flags
 if env["platform"] == "macos":
@@ -134,7 +136,7 @@ if env["platform"] in ["windows", "linuxbsd", "android"]:
 if env["platform"] == "windows":
     env.Append(CPPDEFINES=["RIVE_D3D12", "D3D12_ENABLED"])
     env.Append(CXXFLAGS=["/std:c++20"])
-    env.Append(LIBS=["d3d12", "dxgi", "dxguid", "d3dcompiler"])
+    env.Append(LIBS=["d3d12", "dxgi", "dxguid", "d3dcompiler", "opengl32"])
 
     # Prioritize Godot build deps for D3DX12
     local_app_data = os.environ.get("LOCALAPPDATA")
@@ -171,7 +173,7 @@ dirs_to_scan = [
     os.path.join(rive_dir, 'renderer', 'src')
 ]
 
-exclude_dir_names = {'d3d', 'd3d11', 'd3d12', 'vulkan', 'webgpu', 'dawn', 'gl', 'android', 'ios'}
+exclude_dir_names = {'d3d', 'd3d11', 'd3d12', 'vulkan', 'webgpu', 'dawn', 'android', 'ios'}
 if env["platform"] != "macos":
     exclude_dir_names.add('metal')
 
@@ -188,14 +190,27 @@ for d in dirs_to_scan:
         dirs[:] = [x for x in dirs if x not in exclude_dir_names]
         for f in files:
             if f.endswith('.cpp') or (f.endswith('.mm') and env["platform"] == "macos"):
+                # Exclude EGL dependent file on non-Android platforms
+                if f == "load_gles_extensions.cpp" and env["platform"] != "android":
+                    continue
+                # Exclude render_context_gl_impl.cpp as we use a patched version in src/patches
+                if f == "render_context_gl_impl.cpp":
+                    continue
+                # Exclude render_buffer_gl_impl.cpp as we use a patched version in src/patches
+                if f == "render_buffer_gl_impl.cpp":
+                    continue
                 rive_sources.append(os.path.join(root, f))
 
 # Add source files.
 sources = Glob("src/*.cpp")
+sources += Glob("src/patches/*.cpp")
 if env["platform"] == "macos":
     sources += Glob("src/*.mm")
 
 sources += rive_sources
+sources.append(os.path.join(rive_dir, "renderer", "glad", "glad_custom.c"))
+sources.append(os.path.join(rive_dir, "renderer", "glad", "src", "gles2.c"))
+sources.append(os.path.join(rive_dir, "renderer", "glad", "src", "egl.c"))
 
 # Find gdextension path even if the directory or extension is renamed (e.g. project/addons/example/example.gdextension).
 (extension_path,) = glob("project/addons/*/*.gdextension")

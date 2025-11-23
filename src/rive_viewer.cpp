@@ -59,22 +59,23 @@ RiveViewer::RiveViewer()
 
 RiveViewer::~RiveViewer()
 {
-    if (texture.is_valid())
+    if (texture_rid.is_valid())
     {
-        RID rid = texture->get_texture_rd_rid();
-        if (rid.is_valid())
+        RenderingServer *rs = RenderingServer::get_singleton();
+        if (rs)
         {
-            RenderingServer *rs = RenderingServer::get_singleton();
-            if (rs)
+            RenderingDevice *rd = rs->get_rendering_device();
+            if (rd)
             {
-                RenderingDevice *rd = rs->get_rendering_device();
-                if (rd)
-                {
-                    rd->free_rid(rid);
-                }
+                rd->free_rid(texture_rid);
+            }
+            else
+            {
+                rs->free_rid(texture_rid);
             }
         }
     }
+    texture_rd_ref.unref();
 }
 
 void RiveViewer::_notification(int p_what)
@@ -90,9 +91,13 @@ void RiveViewer::_notification(int p_what)
     case NOTIFICATION_RESIZED:
         break;
     case NOTIFICATION_DRAW:
-        if (texture.is_valid())
+        if (texture_rd_ref.is_valid())
         {
-            draw_texture(texture, Point2());
+            draw_texture(texture_rd_ref, Point2());
+        }
+        else if (texture_rid.is_valid())
+        {
+            RenderingServer::get_singleton()->canvas_item_add_texture_rect(get_canvas_item(), Rect2(Point2(), get_size()), texture_rid);
         }
         break;
     case NOTIFICATION_PROCESS:
@@ -126,39 +131,58 @@ void RiveViewer::_render_rive()
     if (!rs)
         return;
     RenderingDevice *rd = rs->get_rendering_device();
-    if (!rd)
+    
+    String driver = rs->get_current_rendering_driver_name();
+    bool is_opengl = (driver == "opengl3");
+
+    if (!rd && !is_opengl)
         return;
 
-    if (texture.is_null() || texture->get_width() != size.width || texture->get_height() != size.height)
+    if (texture_size != size)
     {
-        if (texture.is_valid())
+        if (texture_rid.is_valid())
         {
-            RID old_rid = texture->get_texture_rd_rid();
-            if (old_rid.is_valid())
+            if (rd)
             {
-                rd->free_rid(old_rid);
+                rd->free_rid(texture_rid);
             }
+            else
+            {
+                rs->free_rid(texture_rid);
+            }
+            texture_rid = RID();
         }
 
-        texture.instantiate();
+        if (rd)
+        {
+            Ref<RDTextureFormat> tf;
+            tf.instantiate();
+            tf->set_format(RenderingDevice::DATA_FORMAT_R8G8B8A8_UNORM);
+            tf->set_width(size.width);
+            tf->set_height(size.height);
+            tf->set_usage_bits(RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_CAN_COPY_FROM_BIT);
 
-        Ref<RDTextureFormat> tf;
-        tf.instantiate();
-        tf->set_format(RenderingDevice::DATA_FORMAT_R8G8B8A8_UNORM);
-        tf->set_width(size.width);
-        tf->set_height(size.height);
-        tf->set_usage_bits(RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_CAN_COPY_FROM_BIT);
+            Ref<RDTextureView> tv;
+            tv.instantiate();
 
-        Ref<RDTextureView> tv;
-        tv.instantiate();
-
-        RID tex_rid = rd->texture_create(tf, tv);
-        texture->set_texture_rd_rid(tex_rid);
+            texture_rid = rd->texture_create(tf, tv);
+            
+            if (texture_rd_ref.is_null())
+            {
+                texture_rd_ref.instantiate();
+            }
+            texture_rd_ref->set_texture_rd_rid(texture_rid);
+        }
+        else
+        {
+            Ref<Image> img = Image::create(size.width, size.height, false, Image::FORMAT_RGBA8);
+            texture_rid = rs->texture_2d_create(img);
+            texture_rd_ref.unref();
+        }
+        texture_size = size;
     }
 
-    RID tex_rid = texture->get_texture_rd_rid();
-
-    rive_integration::render_texture(rd, tex_rid, this, size.width, size.height);
+    rive_integration::render_texture(rd, texture_rid, this, size.width, size.height);
 }
 
 void RiveViewer::set_file_path(const String &p_path)

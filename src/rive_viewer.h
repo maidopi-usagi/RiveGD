@@ -2,6 +2,7 @@
 #define RIVE_VIEWER_H
 
 #include <godot_cpp/classes/control.hpp>
+#include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/classes/texture2drd.hpp>
 #include <godot_cpp/classes/input_event.hpp>
 #include <godot_cpp/classes/input_event_mouse.hpp>
@@ -28,7 +29,9 @@ class RiveViewer : public Control, public RiveDrawable
     std::unique_ptr<rive::StateMachineInstance> state_machine;
     rive::rcp<rive::ViewModelInstance> view_model_instance;
 
-    Ref<Texture2DRD> texture;
+    RID texture_rid;
+    Ref<Texture2DRD> texture_rd_ref; // Keep reference if using RD
+    Size2i texture_size;
 
     String current_animation;
     String current_state_machine;
