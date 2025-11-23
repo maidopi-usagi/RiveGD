@@ -4,8 +4,7 @@ Rive runtime for Godot 4 as a GDExtension. Using Rive Renderer as rendering back
 
 ## Limitations
 
-- **Vulkan backend:** Work in progress.
-- **D3D12 backend:** Work in progress.
+- **Not tested on:** Linux/Android/iOS
 - **OpenGL backend:** Not implemented yet.
 
 
@@ -38,7 +37,7 @@ Rive runtime for Godot 4 as a GDExtension. Using Rive Renderer as rendering back
 2. **Generate Rive Shaders**:
    Before compiling, you need to generate the shader headers for the Rive runtime.
    ```bash
-   python3 rive/generate_shaders.py third-party/rive-runtime/renderer/src/shaders third-party/rive-runtime/renderer/include/generated/shaders
+   python3 scripts/build_shaders.py third-party/rive-runtime/renderer/src/shaders third-party/rive-runtime/renderer/include/generated/shaders
    ```
 
 3. **Compile the Extension**:
