@@ -1,4 +1,5 @@
 #include "rive_viewer.h"
+#include "rive_renderer.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/rendering_device.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>
@@ -21,10 +22,7 @@
 
 using namespace godot;
 
-namespace rive_integration
-{
-    void render_texture(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height);
-}
+
 
 void RiveViewer::_bind_methods()
 {
@@ -341,10 +339,12 @@ void RiveViewer::_gui_input(const Ref<InputEvent> &p_event)
         Vector2 local_pos = mouse_event->get_position();
         rive::Vec2D rive_pos = inverse * rive::Vec2D(local_pos.x, local_pos.y);
 
+        rive::HitResult hit_result = rive::HitResult::none;
+
         Ref<InputEventMouseMotion> motion = p_event;
         if (motion.is_valid())
         {
-            state_machine->pointerMove(rive_pos);
+            hit_result = state_machine->pointerMove(rive_pos);
         }
 
         Ref<InputEventMouseButton> button = p_event;
@@ -352,15 +352,18 @@ void RiveViewer::_gui_input(const Ref<InputEvent> &p_event)
         {
             if (button->is_pressed())
             {
-                state_machine->pointerDown(rive_pos);
+                hit_result = state_machine->pointerDown(rive_pos);
             }
             else
             {
-                state_machine->pointerUp(rive_pos);
+                hit_result = state_machine->pointerUp(rive_pos);
             }
         }
 
-        accept_event();
+        if (hit_result != rive::HitResult::none)
+        {
+            accept_event();
+        }
     }
 }
 

@@ -7,12 +7,19 @@
 
 #include "rive_viewer.h"
 #include "rive_renderer.h"
+#include "rive_canvas.h"
+#include "rive_svg.h"
 
 using namespace godot;
 
 void initialize_rive_module(ModuleInitializationLevel p_level) {
     if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
         ClassDB::register_class<RiveViewer>();
+        ClassDB::register_class<RivePath>();
+        ClassDB::register_class<RivePaint>();
+        ClassDB::register_class<RiveRendererWrapper>();
+        ClassDB::register_class<RiveCanvas>();
+        ClassDB::register_class<RiveSVG>();
         
         // Initialize renderer
     }
