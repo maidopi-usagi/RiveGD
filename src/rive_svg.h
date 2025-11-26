@@ -3,7 +3,7 @@
 
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/classes/xml_parser.hpp>
-#include "rive_canvas.h"
+#include "resources/rive_types.h"
 #include "rive/math/mat2d.hpp"
 
 // Forward declarations
@@ -48,6 +48,7 @@ public:
     void load_file(String path);
     void draw(Ref<RiveRendererWrapper> renderer);
     
+    std::unique_ptr<rive::ArtboardInstance> instantiate_artboard();
     Ref<RiveSVG> instance();
 };
 

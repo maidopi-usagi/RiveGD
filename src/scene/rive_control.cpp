@@ -1,5 +1,5 @@
-#include "rive_viewer.h"
-#include "rive_renderer.h"
+#include "rive_control.h"
+#include "../rive_renderer.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/rendering_device.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>
@@ -24,39 +24,39 @@ using namespace godot;
 
 
 
-void RiveViewer::_bind_methods()
+void RiveControl::_bind_methods()
 {
-    ClassDB::bind_method(D_METHOD("set_file_path", "path"), &RiveViewer::set_file_path);
-    ClassDB::bind_method(D_METHOD("get_file_path"), &RiveViewer::get_file_path);
+    ClassDB::bind_method(D_METHOD("set_file_path", "path"), &RiveControl::set_file_path);
+    ClassDB::bind_method(D_METHOD("get_file_path"), &RiveControl::get_file_path);
 
-    ClassDB::bind_method(D_METHOD("play_animation", "name"), &RiveViewer::play_animation);
-    ClassDB::bind_method(D_METHOD("play_state_machine", "name"), &RiveViewer::play_state_machine);
-    ClassDB::bind_method(D_METHOD("get_animation_list"), &RiveViewer::get_animation_list);
-    ClassDB::bind_method(D_METHOD("get_state_machine_list"), &RiveViewer::get_state_machine_list);
+    ClassDB::bind_method(D_METHOD("play_animation", "name"), &RiveControl::play_animation);
+    ClassDB::bind_method(D_METHOD("play_state_machine", "name"), &RiveControl::play_state_machine);
+    ClassDB::bind_method(D_METHOD("get_animation_list"), &RiveControl::get_animation_list);
+    ClassDB::bind_method(D_METHOD("get_state_machine_list"), &RiveControl::get_state_machine_list);
 
-    ClassDB::bind_method(D_METHOD("set_animation_name", "name"), &RiveViewer::set_animation_name);
-    ClassDB::bind_method(D_METHOD("get_animation_name"), &RiveViewer::get_animation_name);
-    ClassDB::bind_method(D_METHOD("set_state_machine_name", "name"), &RiveViewer::set_state_machine_name);
-    ClassDB::bind_method(D_METHOD("get_state_machine_name"), &RiveViewer::get_state_machine_name);
+    ClassDB::bind_method(D_METHOD("set_animation_name", "name"), &RiveControl::set_animation_name);
+    ClassDB::bind_method(D_METHOD("get_animation_name"), &RiveControl::get_animation_name);
+    ClassDB::bind_method(D_METHOD("set_state_machine_name", "name"), &RiveControl::set_state_machine_name);
+    ClassDB::bind_method(D_METHOD("get_state_machine_name"), &RiveControl::get_state_machine_name);
 
-    ClassDB::bind_method(D_METHOD("set_text_value", "property_path", "value"), &RiveViewer::set_text_value);
-    ClassDB::bind_method(D_METHOD("set_number_value", "property_path", "value"), &RiveViewer::set_number_value);
-    ClassDB::bind_method(D_METHOD("set_boolean_value", "property_path", "value"), &RiveViewer::set_boolean_value);
-    ClassDB::bind_method(D_METHOD("fire_trigger", "property_path"), &RiveViewer::fire_trigger);
-    ClassDB::bind_method(D_METHOD("set_enum_value", "property_path", "value"), &RiveViewer::set_enum_value);
-    ClassDB::bind_method(D_METHOD("set_color_value", "property_path", "value"), &RiveViewer::set_color_value);
+    ClassDB::bind_method(D_METHOD("set_text_value", "property_path", "value"), &RiveControl::set_text_value);
+    ClassDB::bind_method(D_METHOD("set_number_value", "property_path", "value"), &RiveControl::set_number_value);
+    ClassDB::bind_method(D_METHOD("set_boolean_value", "property_path", "value"), &RiveControl::set_boolean_value);
+    ClassDB::bind_method(D_METHOD("fire_trigger", "property_path"), &RiveControl::fire_trigger);
+    ClassDB::bind_method(D_METHOD("set_enum_value", "property_path", "value"), &RiveControl::set_enum_value);
+    ClassDB::bind_method(D_METHOD("set_color_value", "property_path", "value"), &RiveControl::set_color_value);
 
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "file_path", PROPERTY_HINT_FILE, "*.riv"), "set_file_path", "get_file_path");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "animation_name"), "set_animation_name", "get_animation_name");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "state_machine_name"), "set_state_machine_name", "get_state_machine_name");
 }
 
-RiveViewer::RiveViewer()
+RiveControl::RiveControl()
 {
     set_mouse_filter(MOUSE_FILTER_STOP);
 }
 
-RiveViewer::~RiveViewer()
+RiveControl::~RiveControl()
 {
     if (texture_rid.is_valid())
     {
@@ -66,6 +66,7 @@ RiveViewer::~RiveViewer()
             RenderingDevice *rd = rs->get_rendering_device();
             if (texture_rd_ref.is_valid())
             {
+                texture_rd_ref->set_texture_rd_rid(RID());
                 if (rd)
                 {
                     rd->free_rid(texture_rid);
@@ -80,7 +81,7 @@ RiveViewer::~RiveViewer()
     texture_rd_ref.unref();
 }
 
-void RiveViewer::_notification(int p_what)
+void RiveControl::_notification(int p_what)
 {
     switch (p_what)
     {
@@ -123,7 +124,7 @@ void RiveViewer::_notification(int p_what)
     }
 }
 
-void RiveViewer::_render_rive()
+void RiveControl::_render_rive()
 {
     Size2i size = get_size();
     if (size.width <= 0 || size.height <= 0)
@@ -146,6 +147,7 @@ void RiveViewer::_render_rive()
         {
             if (texture_rd_ref.is_valid())
             {
+                texture_rd_ref->set_texture_rd_rid(RID());
                 if (rd)
                 {
                     rd->free_rid(texture_rid);
@@ -190,7 +192,7 @@ void RiveViewer::_render_rive()
     rive_integration::render_texture(rd, texture_rid, this, size.width, size.height);
 }
 
-void RiveViewer::set_file_path(const String &p_path)
+void RiveControl::set_file_path(const String &p_path)
 {
     file_path = p_path;
     if (is_inside_tree())
@@ -199,12 +201,12 @@ void RiveViewer::set_file_path(const String &p_path)
     }
 }
 
-String RiveViewer::get_file_path() const
+String RiveControl::get_file_path() const
 {
     return file_path;
 }
 
-void RiveViewer::load_file()
+void RiveControl::load_file()
 {
     if (file_path.is_empty())
         return;
@@ -323,7 +325,7 @@ void RiveViewer::load_file()
     }
 }
 
-void RiveViewer::draw(rive::Renderer *renderer)
+void RiveControl::draw(rive::Renderer *renderer)
 {
     if (artboard)
     {
@@ -337,7 +339,7 @@ void RiveViewer::draw(rive::Renderer *renderer)
     }
 }
 
-bool RiveViewer::_has_point(const Vector2 &p_point) const
+bool RiveControl::_has_point(const Vector2 &p_point) const
 {
     if (!state_machine)
         return false;
@@ -351,7 +353,7 @@ bool RiveViewer::_has_point(const Vector2 &p_point) const
     return state_machine->hitTest(rive_pos);
 }
 
-rive::Mat2D RiveViewer::_get_rive_transform() const
+rive::Mat2D RiveControl::_get_rive_transform() const
 {
     if (!artboard)
         return rive::Mat2D();
@@ -364,7 +366,7 @@ rive::Mat2D RiveViewer::_get_rive_transform() const
         artboard->bounds());
 }
 
-void RiveViewer::_gui_input(const Ref<InputEvent> &p_event)
+void RiveControl::_gui_input(const Ref<InputEvent> &p_event)
 {
     if (!state_machine || !artboard)
         return;
@@ -411,7 +413,7 @@ void RiveViewer::_gui_input(const Ref<InputEvent> &p_event)
     }
 }
 
-void RiveViewer::play_animation(const String &p_name)
+void RiveControl::play_animation(const String &p_name)
 {
     if (!artboard)
         return;
@@ -425,7 +427,7 @@ void RiveViewer::play_animation(const String &p_name)
     }
 }
 
-void RiveViewer::play_state_machine(const String &p_name)
+void RiveControl::play_state_machine(const String &p_name)
 {
     if (!artboard)
         return;
@@ -439,7 +441,7 @@ void RiveViewer::play_state_machine(const String &p_name)
     }
 }
 
-PackedStringArray RiveViewer::get_animation_list() const
+PackedStringArray RiveControl::get_animation_list() const
 {
     PackedStringArray list;
     if (artboard)
@@ -452,7 +454,7 @@ PackedStringArray RiveViewer::get_animation_list() const
     return list;
 }
 
-PackedStringArray RiveViewer::get_state_machine_list() const
+PackedStringArray RiveControl::get_state_machine_list() const
 {
     PackedStringArray list;
     if (artboard)
@@ -465,7 +467,7 @@ PackedStringArray RiveViewer::get_state_machine_list() const
     return list;
 }
 
-void RiveViewer::_validate_property(PropertyInfo &p_property) const
+void RiveControl::_validate_property(PropertyInfo &p_property) const
 {
     if (p_property.name == StringName("animation_name"))
     {
@@ -495,7 +497,7 @@ void RiveViewer::_validate_property(PropertyInfo &p_property) const
     }
 }
 
-void RiveViewer::set_animation_name(const String &p_name)
+void RiveControl::set_animation_name(const String &p_name)
 {
     current_animation = p_name;
     if (!p_name.is_empty())
@@ -505,12 +507,12 @@ void RiveViewer::set_animation_name(const String &p_name)
     }
 }
 
-String RiveViewer::get_animation_name() const
+String RiveControl::get_animation_name() const
 {
     return current_animation;
 }
 
-void RiveViewer::set_state_machine_name(const String &p_name)
+void RiveControl::set_state_machine_name(const String &p_name)
 {
     current_state_machine = p_name;
     if (!p_name.is_empty())
@@ -520,7 +522,7 @@ void RiveViewer::set_state_machine_name(const String &p_name)
     }
 }
 
-String RiveViewer::get_state_machine_name() const
+String RiveControl::get_state_machine_name() const
 {
     return current_state_machine;
 }
@@ -552,7 +554,7 @@ static rive::ViewModelInstance *resolve_view_model_instance(rive::ViewModelInsta
     return current;
 }
 
-void RiveViewer::set_text_value(const String &p_property_path, const String &p_value)
+void RiveControl::set_text_value(const String &p_property_path, const String &p_value)
 {
     if (!view_model_instance)
         return;
@@ -573,7 +575,7 @@ void RiveViewer::set_text_value(const String &p_property_path, const String &p_v
     }
 }
 
-void RiveViewer::set_number_value(const String &p_property_path, float p_value)
+void RiveControl::set_number_value(const String &p_property_path, float p_value)
 {
     if (!view_model_instance)
         return;
@@ -594,7 +596,7 @@ void RiveViewer::set_number_value(const String &p_property_path, float p_value)
     }
 }
 
-void RiveViewer::set_boolean_value(const String &p_property_path, bool p_value)
+void RiveControl::set_boolean_value(const String &p_property_path, bool p_value)
 {
     if (!view_model_instance)
         return;
@@ -615,7 +617,7 @@ void RiveViewer::set_boolean_value(const String &p_property_path, bool p_value)
     }
 }
 
-void RiveViewer::fire_trigger(const String &p_property_path)
+void RiveControl::fire_trigger(const String &p_property_path)
 {
     if (!view_model_instance)
         return;
@@ -636,7 +638,7 @@ void RiveViewer::fire_trigger(const String &p_property_path)
     }
 }
 
-void RiveViewer::_collect_view_model_properties(rive::ViewModelInstance *vm, String prefix)
+void RiveControl::_collect_view_model_properties(rive::ViewModelInstance *vm, String prefix)
 {
     if (!vm)
         return;
@@ -710,7 +712,7 @@ void RiveViewer::_collect_view_model_properties(rive::ViewModelInstance *vm, Str
     }
 }
 
-void RiveViewer::_update_property_list()
+void RiveControl::_update_property_list()
 {
     rive_properties.clear();
     if (view_model_instance)
@@ -720,7 +722,7 @@ void RiveViewer::_update_property_list()
     notify_property_list_changed();
 }
 
-void RiveViewer::_get_property_list(List<PropertyInfo> *p_list) const
+void RiveControl::_get_property_list(List<PropertyInfo> *p_list) const
 {
     for (const RiveProperty &prop : rive_properties)
     {
@@ -735,7 +737,7 @@ void RiveViewer::_get_property_list(List<PropertyInfo> *p_list) const
     }
 }
 
-bool RiveViewer::_get(const StringName &p_name, Variant &r_ret) const
+bool RiveControl::_get(const StringName &p_name, Variant &r_ret) const
 {
     String name = p_name;
     if (name.begins_with("rive/"))
@@ -794,7 +796,7 @@ bool RiveViewer::_get(const StringName &p_name, Variant &r_ret) const
     return false;
 }
 
-bool RiveViewer::_set(const StringName &p_name, const Variant &p_value)
+bool RiveControl::_set(const StringName &p_name, const Variant &p_value)
 {
     String name = p_name;
     if (name.begins_with("rive/"))
@@ -809,33 +811,33 @@ bool RiveViewer::_set(const StringName &p_name, const Variant &p_value)
                 {
                     if (p_value)
                     {
-                        const_cast<RiveViewer *>(this)->fire_trigger(path);
+                        const_cast<RiveControl *>(this)->fire_trigger(path);
                     }
                     return true;
                 }
                 if (prop.type == Variant::FLOAT)
                 {
-                    const_cast<RiveViewer *>(this)->set_number_value(path, p_value);
+                    const_cast<RiveControl *>(this)->set_number_value(path, p_value);
                     return true;
                 }
                 if (prop.type == Variant::STRING)
                 {
-                    const_cast<RiveViewer *>(this)->set_text_value(path, p_value);
+                    const_cast<RiveControl *>(this)->set_text_value(path, p_value);
                     return true;
                 }
                 if (prop.type == Variant::BOOL)
                 {
-                    const_cast<RiveViewer *>(this)->set_boolean_value(path, p_value);
+                    const_cast<RiveControl *>(this)->set_boolean_value(path, p_value);
                     return true;
                 }
                 if (prop.type == Variant::INT)
                 {
-                    const_cast<RiveViewer *>(this)->set_enum_value(path, p_value);
+                    const_cast<RiveControl *>(this)->set_enum_value(path, p_value);
                     return true;
                 }
                 if (prop.type == Variant::COLOR)
                 {
-                    const_cast<RiveViewer *>(this)->set_color_value(path, p_value);
+                    const_cast<RiveControl *>(this)->set_color_value(path, p_value);
                     return true;
                 }
             }
@@ -844,7 +846,7 @@ bool RiveViewer::_set(const StringName &p_name, const Variant &p_value)
     return false;
 }
 
-void RiveViewer::set_enum_value(const String &p_property_path, int p_value)
+void RiveControl::set_enum_value(const String &p_property_path, int p_value)
 {
     if (!view_model_instance)
         return;
@@ -865,7 +867,7 @@ void RiveViewer::set_enum_value(const String &p_property_path, int p_value)
     }
 }
 
-void RiveViewer::set_color_value(const String &p_property_path, Color p_value)
+void RiveControl::set_color_value(const String &p_property_path, Color p_value)
 {
     if (!view_model_instance)
         return;

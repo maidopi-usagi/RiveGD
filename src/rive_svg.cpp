@@ -259,11 +259,22 @@ void RiveSVG::draw(Ref<RiveRendererWrapper> renderer) {
     if (renderer.is_null()) return;
     if (!artboard_instance) return;
     
-    if (renderer->renderer) {
+    if (renderer->get_renderer()) {
         renderer->save();
-        artboard_instance->draw(renderer->renderer);
+        artboard_instance->draw(renderer->get_renderer());
         renderer->restore();
     }
+}
+
+std::unique_ptr<rive::ArtboardInstance> RiveSVG::instantiate_artboard() {
+    if (source_artboard) {
+        auto instance = source_artboard->instance();
+        if (instance) {
+            instance->advance(0.0f);
+        }
+        return instance;
+    }
+    return nullptr;
 }
 
 Ref<RiveSVG> RiveSVG::instance() {

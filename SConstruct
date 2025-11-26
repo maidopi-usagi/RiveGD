@@ -20,6 +20,9 @@ extension_env = rive_env.Clone()
 # Add RiveGD sources
 sources = Glob("src/*.cpp")
 sources += Glob("src/patches/*.cpp")
+sources += Glob("src/resources/*.cpp")
+sources += Glob("src/scene/*.cpp")
+sources += Glob("src/editor/*.cpp")
 if extension_env["platform"] == "macos":
     sources += Glob("src/*.mm")
 

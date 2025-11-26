@@ -1,22 +1,20 @@
-#ifndef RIVE_CANVAS_H
-#define RIVE_CANVAS_H
+#ifndef RIVE_TYPES_H
+#define RIVE_TYPES_H
 
-#include <godot_cpp/classes/control.hpp>
+#include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/classes/image_texture.hpp>
-#include <godot_cpp/classes/texture2drd.hpp>
-#include <godot_cpp/classes/rendering_device.hpp>
-#include <godot_cpp/classes/rendering_server.hpp>
-
 #include "rive/renderer.hpp"
 #include "rive/factory.hpp"
 #include "rive/math/mat2d.hpp"
-#include "rive_render_registry.h"
+#include "../rive_render_registry.h"
 
 using namespace godot;
 
 namespace rive {
     class RawPath;
 }
+
+class RiveSVG; // Forward declaration
 
 class RivePath : public RefCounted {
     GDCLASS(RivePath, RefCounted);
@@ -72,8 +70,6 @@ public:
 class RiveRendererWrapper : public RefCounted {
     GDCLASS(RiveRendererWrapper, RefCounted);
 
-    friend class RiveSVG;
-
 private:
     rive::Renderer* renderer = nullptr;
 
@@ -82,6 +78,7 @@ protected:
 
 public:
     void set_renderer(rive::Renderer* p_renderer) { renderer = p_renderer; }
+    rive::Renderer* get_renderer() const { return renderer; }
     
     void save();
     void restore();
@@ -92,28 +89,4 @@ public:
     void draw_path(Ref<RivePath> path, Ref<RivePaint> paint);
 };
 
-class RiveCanvas : public Control, public RiveDrawable {
-    GDCLASS(RiveCanvas, Control);
-
-private:
-    RID texture_rid;
-    Ref<Texture2DRD> texture_rd_ref;
-    Size2i texture_size;
-    
-    Ref<RiveRendererWrapper> renderer_wrapper;
-
-    void _render_rive();
-
-protected:
-    static void _bind_methods();
-    void _notification(int p_what);
-
-public:
-    RiveCanvas();
-    ~RiveCanvas();
-
-    // RiveDrawable implementation
-    void draw(rive::Renderer* renderer) override;
-};
-
-#endif // RIVE_CANVAS_H
+#endif

@@ -5,23 +5,41 @@
 #include <godot_cpp/godot.hpp>
 #include <godot_cpp/classes/engine.hpp>
 
-#include "rive_viewer.h"
 #include "rive_renderer.h"
-#include "rive_canvas.h"
 #include "rive_svg.h"
+#include "resources/rive_file.h"
+#include "resources/rive_types.h"
+#include "scene/rive_node.h"
+#include "scene/rive_file_instance.h"
+#include "scene/rive_control.h"
+#include "scene/rive_canvas_2d.h"
+#include "scene/rive_raw.h"
+#include "editor/rive_editor_plugin.h"
+#include <godot_cpp/classes/editor_plugin_registration.hpp>
 
 using namespace godot;
 
 void initialize_rive_module(ModuleInitializationLevel p_level) {
     if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
-        ClassDB::register_class<RiveViewer>();
+        ClassDB::register_class<RiveControl>();
         ClassDB::register_class<RivePath>();
         ClassDB::register_class<RivePaint>();
         ClassDB::register_class<RiveRendererWrapper>();
-        ClassDB::register_class<RiveCanvas>();
         ClassDB::register_class<RiveSVG>();
         
+        ClassDB::register_class<RiveFile>();
+        ClassDB::register_class<RiveNode>();
+        ClassDB::register_class<RiveFileInstance>();
+        ClassDB::register_class<RiveRaw>();
+        ClassDB::register_class<RiveCanvas2D>();
+        
         // Initialize renderer
+    }
+    
+    if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
+        ClassDB::register_class<RiveImportPlugin>();
+        ClassDB::register_class<RiveEditorPlugin>();
+        EditorPlugins::add_by_type<RiveEditorPlugin>();
     }
 }
 

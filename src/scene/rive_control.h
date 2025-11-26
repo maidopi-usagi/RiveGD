@@ -1,5 +1,5 @@
-#ifndef RIVE_VIEWER_H
-#define RIVE_VIEWER_H
+#ifndef RIVE_CONTROL_H
+#define RIVE_CONTROL_H
 
 #include <godot_cpp/classes/control.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
@@ -18,9 +18,9 @@
 
 using namespace godot;
 
-class RiveViewer : public Control, public RiveDrawable
+class RiveControl : public Control, public RiveDrawable
 {
-    GDCLASS(RiveViewer, Control);
+    GDCLASS(RiveControl, Control);
 
     String file_path;
     rive::rcp<rive::File> rive_file;
@@ -61,8 +61,8 @@ protected:
     rive::Mat2D _get_rive_transform() const;
 
 public:
-    RiveViewer();
-    ~RiveViewer();
+    RiveControl();
+    ~RiveControl();
 
     void set_file_path(const String &p_path);
     String get_file_path() const;
@@ -95,4 +95,4 @@ public:
     void set_color_value(const String &p_property_path, Color p_value);
 };
 
-#endif // RIVE_VIEWER_H
+#endif // RIVE_CONTROL_H
