@@ -201,12 +201,19 @@ env.Append(CPPDEFINES=[
     'HB_NO_LAYOUT_COLLECT_GLYPHS',
     'HB_NO_LAYOUT_RARELY_USED',
     'HB_NO_LAYOUT_UNUSED',
-    'HB_NO_OT_FONT_GLYPH_NAMES',
+    # 'HB_NO_OT_FONT_GLYPH_NAMES', # Removed to fix unused function error in hb-coretext-font.cc
     'HB_NO_PAINT',
     'HB_NO_MMAP',
     'HB_NO_META',
     'SB_CONFIG_UNITY'
 ])
+
+# Suppress warnings for third-party dependencies
+env.Append(CCFLAGS=['-Wno-unused-function', '-Wno-error=unused-function', '-Wno-macro-redefined'])
+
+# Force include unistd.h for zlib on macOS to fix implicit function declaration errors
+if env["platform"] == "macos":
+    env.Append(CCFLAGS=['-include', 'unistd.h'])
 
 # Force include rive_harfbuzz_renames.h
 if env["platform"] == "windows":
