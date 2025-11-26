@@ -10,10 +10,17 @@ namespace rive {
     class Factory;
 }
 
+class RendererState {
+public:
+    virtual ~RendererState() {}
+};
+
 class RiveDrawable {
 public:
-    virtual ~RiveDrawable() {}
+    virtual ~RiveDrawable() { delete renderer_state; }
     virtual void draw(rive::Renderer* renderer) = 0;
+    
+    RendererState* renderer_state = nullptr;
 };
 
 class RiveRenderRegistry {

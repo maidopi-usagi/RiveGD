@@ -17,6 +17,14 @@ namespace rive_integration {
 
 static rive::gpu::RenderContext *g_rive_context = nullptr;
 
+class MetalRendererState : public RendererState {
+public:
+    rive::rcp<rive::gpu::RenderTargetMetal> renderTarget;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    MTLPixelFormat pixelFormat = MTLPixelFormatInvalid;
+};
+
 bool create_metal_context(RenderingDevice* rd) {
     if (!rd) return false;
     
@@ -40,52 +48,68 @@ bool create_metal_context(RenderingDevice* rd) {
 void render_texture_metal(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height) {
     if (!g_rive_context || !rd || !drawable) return;
     
-    void* queue_ptr = (void*)rd->get_driver_resource(RenderingDevice::DRIVER_RESOURCE_COMMAND_QUEUE, RID(), 0);
-    if (!queue_ptr) return;
-    
-    id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)(queue_ptr);
-    id<MTLCommandBuffer> cmd_buffer = [queue commandBuffer];
-    
-    if (!cmd_buffer) return;
-    
-    void* texture_ptr = (void*)rd->get_driver_resource(RenderingDevice::DRIVER_RESOURCE_TEXTURE, texture_rid, 0);
-    if (!texture_ptr) return;
-    
-    id<MTLTexture> texture = (__bridge id<MTLTexture>)(texture_ptr);
-    
-    rive::gpu::RenderContext::FrameDescriptor fd;
-    fd.renderTargetWidth = width;
-    fd.renderTargetHeight = height;
-    fd.loadAction = rive::gpu::LoadAction::clear;
-    fd.clearColor = 0x00000000;
+    @autoreleasepool {
+        void* queue_ptr = (void*)rd->get_driver_resource(RenderingDevice::DRIVER_RESOURCE_COMMAND_QUEUE, RID(), 0);
+        if (!queue_ptr) return;
+        
+        id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)(queue_ptr);
+        id<MTLCommandBuffer> cmd_buffer = [queue commandBuffer];
+        
+        if (!cmd_buffer) return;
+        
+        void* texture_ptr = (void*)rd->get_driver_resource(RenderingDevice::DRIVER_RESOURCE_TEXTURE, texture_rid, 0);
+        if (!texture_ptr) return;
+        
+        id<MTLTexture> texture = (__bridge id<MTLTexture>)(texture_ptr);
+        
+        rive::gpu::RenderContext::FrameDescriptor fd;
+        fd.renderTargetWidth = width;
+        fd.renderTargetHeight = height;
+        fd.loadAction = rive::gpu::LoadAction::clear;
+        fd.clearColor = 0x00000000;
 
-    g_rive_context->beginFrame(fd);
-    
-    rive::gpu::RenderContextMetalImpl *impl = g_rive_context->static_impl_cast<rive::gpu::RenderContextMetalImpl>();
-    rive::rcp<rive::gpu::RenderTargetMetal> rtarget = impl->makeRenderTarget(texture.pixelFormat, width, height);
-    
-    if (rtarget) {
-        rtarget->setTargetTexture(texture);
+        g_rive_context->beginFrame(fd);
         
-        rive::gpu::RenderContext::FlushResources fr;
-        fr.renderTarget = rtarget.get();
-        fr.externalCommandBuffer = (__bridge void*)cmd_buffer;
+        MetalRendererState* state = static_cast<MetalRendererState*>(drawable->renderer_state);
+        if (!state) {
+            state = new MetalRendererState();
+            drawable->renderer_state = state;
+        }
+
+        rive::gpu::RenderContextMetalImpl *impl = g_rive_context->static_impl_cast<rive::gpu::RenderContextMetalImpl>();
         
-        static uint64_t frame_idx = 0;
-        frame_idx++;
-        fr.currentFrameNumber = frame_idx;
-        fr.safeFrameNumber = (frame_idx > 2) ? frame_idx - 2 : 0;
-        
-        {
-            rive::RiveRenderer renderer(g_rive_context);
-            drawable->draw(&renderer);
+        if (!state->renderTarget || state->width != width || state->height != height || state->pixelFormat != texture.pixelFormat) {
+             state->renderTarget = impl->makeRenderTarget(texture.pixelFormat, width, height);
+             state->width = width;
+             state->height = height;
+             state->pixelFormat = texture.pixelFormat;
         }
         
-        g_rive_context->flush(fr);
+        rive::rcp<rive::gpu::RenderTargetMetal> rtarget = state->renderTarget;
+        
+        if (rtarget) {
+            rtarget->setTargetTexture(texture);
+            
+            rive::gpu::RenderContext::FlushResources fr;
+            fr.renderTarget = rtarget.get();
+            fr.externalCommandBuffer = (__bridge void*)cmd_buffer;
+            
+            static uint64_t frame_idx = 0;
+            frame_idx++;
+            fr.currentFrameNumber = frame_idx;
+            fr.safeFrameNumber = (frame_idx > 2) ? frame_idx - 2 : 0;
+            
+            {
+                rive::RiveRenderer renderer(g_rive_context);
+                drawable->draw(&renderer);
+            }
+            
+            g_rive_context->flush(fr);
+        }
+        
+        [cmd_buffer commit];
+        [cmd_buffer waitUntilCompleted];
     }
-    
-    [cmd_buffer commit];
-    [cmd_buffer waitUntilCompleted];
 }
 
 }
