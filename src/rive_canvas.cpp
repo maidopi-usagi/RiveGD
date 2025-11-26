@@ -545,8 +545,10 @@ RiveCanvas::~RiveCanvas() {
         RenderingServer *rs = RenderingServer::get_singleton();
         if (rs) {
             RenderingDevice *rd = rs->get_rendering_device();
-            if (rd) {
-                rd->free_rid(texture_rid);
+            if (texture_rd_ref.is_valid()) {
+                if (rd) {
+                    rd->free_rid(texture_rid);
+                }
             } else {
                 rs->free_rid(texture_rid);
             }
@@ -598,8 +600,10 @@ void RiveCanvas::_render_rive() {
 
     if (texture_size != size) {
         if (texture_rid.is_valid()) {
-            if (rd) {
-                rd->free_rid(texture_rid);
+            if (texture_rd_ref.is_valid()) {
+                if (rd) {
+                    rd->free_rid(texture_rid);
+                }
             } else {
                 rs->free_rid(texture_rid);
             }

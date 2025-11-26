@@ -74,6 +74,7 @@ public:
 
     // Input handling
     virtual void _gui_input(const Ref<InputEvent> &p_event) override;
+    virtual bool _has_point(const Vector2 &p_point) const override;
 
     // API
     void play_animation(const String &p_name);

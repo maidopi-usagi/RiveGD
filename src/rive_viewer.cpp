@@ -53,6 +53,7 @@ void RiveViewer::_bind_methods()
 
 RiveViewer::RiveViewer()
 {
+    set_mouse_filter(MOUSE_FILTER_STOP);
 }
 
 RiveViewer::~RiveViewer()
@@ -63,9 +64,12 @@ RiveViewer::~RiveViewer()
         if (rs)
         {
             RenderingDevice *rd = rs->get_rendering_device();
-            if (rd)
+            if (texture_rd_ref.is_valid())
             {
-                rd->free_rid(texture_rid);
+                if (rd)
+                {
+                    rd->free_rid(texture_rid);
+                }
             }
             else
             {
@@ -140,9 +144,12 @@ void RiveViewer::_render_rive()
     {
         if (texture_rid.is_valid())
         {
-            if (rd)
+            if (texture_rd_ref.is_valid())
             {
-                rd->free_rid(texture_rid);
+                if (rd)
+                {
+                    rd->free_rid(texture_rid);
+                }
             }
             else
             {
@@ -248,23 +255,43 @@ void RiveViewer::load_file()
                 view_model_instance = rive_file->createViewModelInstance(artboard.get());
             }
 
-            if (artboard->stateMachineCount() > 0)
+            // Try to load specified state machine or animation
+            if (!current_state_machine.is_empty())
             {
-                state_machine = artboard->stateMachineAt(0);
-                current_state_machine = state_machine->name().c_str();
-                current_animation = "";
+                state_machine = artboard->stateMachineNamed(current_state_machine.utf8().get_data());
+            }
 
+            if (!state_machine && !current_animation.is_empty())
+            {
+                animation = artboard->animationNamed(current_animation.utf8().get_data());
+            }
+
+            // Fallback to defaults if nothing specified or found
+            if (!state_machine && !animation)
+            {
+                if (artboard->stateMachineCount() > 0)
+                {
+                    state_machine = artboard->stateMachineAt(0);
+                    current_state_machine = state_machine->name().c_str();
+                    current_animation = "";
+                }
+                else if (artboard->animationCount() > 0)
+                {
+                    animation = artboard->animationAt(0);
+                    current_animation = animation->name().c_str();
+                    current_state_machine = "";
+                }
+            }
+
+            if (state_machine)
+            {
                 if (view_model_instance)
                 {
                     state_machine->bindViewModelInstance(view_model_instance);
                 }
             }
-            else if (artboard->animationCount() > 0)
+            else if (animation)
             {
-                animation = artboard->animationAt(0);
-                current_animation = animation->name().c_str();
-                current_state_machine = "";
-
                 if (view_model_instance)
                 {
                     artboard->bindViewModelInstance(view_model_instance);
@@ -310,6 +337,20 @@ void RiveViewer::draw(rive::Renderer *renderer)
     }
 }
 
+bool RiveViewer::_has_point(const Vector2 &p_point) const
+{
+    if (!state_machine)
+        return false;
+
+    rive::Mat2D transform = _get_rive_transform();
+    rive::Mat2D inverse;
+    if (!transform.invert(&inverse))
+        return false;
+
+    rive::Vec2D rive_pos = inverse * rive::Vec2D(p_point.x, p_point.y);
+    return state_machine->hitTest(rive_pos);
+}
+
 rive::Mat2D RiveViewer::_get_rive_transform() const
 {
     if (!artboard)
@@ -350,13 +391,16 @@ void RiveViewer::_gui_input(const Ref<InputEvent> &p_event)
         Ref<InputEventMouseButton> button = p_event;
         if (button.is_valid())
         {
-            if (button->is_pressed())
+            if (button->get_button_index() == MOUSE_BUTTON_LEFT)
             {
-                hit_result = state_machine->pointerDown(rive_pos);
-            }
-            else
-            {
-                hit_result = state_machine->pointerUp(rive_pos);
+                if (button->is_pressed())
+                {
+                    hit_result = state_machine->pointerDown(rive_pos);
+                }
+                else
+                {
+                    hit_result = state_machine->pointerUp(rive_pos);
+                }
             }
         }
 
