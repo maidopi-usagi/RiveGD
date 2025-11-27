@@ -199,7 +199,8 @@ rive_env.Append(CPPDEFINES=[
 ])
 
 # Suppress warnings for third-party dependencies
-rive_env.Append(CCFLAGS=['-Wno-unused-function', '-Wno-error=unused-function', '-Wno-macro-redefined'])
+if rive_env["platform"] != "windows":
+    rive_env.Append(CCFLAGS=['-Wno-unused-function', '-Wno-error=unused-function', '-Wno-macro-redefined'])
 
 # Force include unistd.h for zlib on macOS to fix implicit function declaration errors
 if rive_env["platform"] == "macos":
@@ -230,10 +231,16 @@ elif rive_env["platform"] in ["windows", "linuxbsd", "android"]:
                 os.path.join(vulkan_sdk, "Include"),
                 os.path.join(vulkan_sdk, "Include", "vma")
             ])
+            rive_env.Append(LIBPATH=[
+                os.path.join(vulkan_sdk, "Lib")
+            ])
 
         # D3D12 configuration (Windows only)
         rive_env.Append(CPPDEFINES=["RIVE_D3D12", "D3D12_ENABLED", "_USE_MATH_DEFINES", "NOMINMAX"])
         rive_env.Append(CXXFLAGS=["/std:c++20"])
+        
+        # Link system libraries
+        rive_env.Append(LIBS=["d3d12", "dxgi", "d3dcompiler", "opengl32", "vulkan-1", "dxguid", "uuid"])
 
         # Prioritize Godot build deps for D3DX12
         local_app_data = os.environ.get("LOCALAPPDATA")
