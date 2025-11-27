@@ -5,7 +5,7 @@
 #include <godot_cpp/godot.hpp>
 #include <godot_cpp/classes/engine.hpp>
 
-#include "rive_renderer.h"
+#include "renderer/rive_renderer.h"
 #include "rive_svg.h"
 #include "resources/rive_file.h"
 #include "resources/rive_types.h"

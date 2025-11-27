@@ -63,7 +63,7 @@ String RiveFileInstance::get_artboard_name() const {
 
 void RiveFileInstance::set_state_machine_name(const String &p_name) {
     state_machine_name = p_name;
-    _load_artboard(); // Reload to apply state machine
+    _load_artboard();
 }
 
 String RiveFileInstance::get_state_machine_name() const {
@@ -72,7 +72,7 @@ String RiveFileInstance::get_state_machine_name() const {
 
 void RiveFileInstance::set_animation_name(const String &p_name) {
     animation_name = p_name;
-    _load_artboard(); // Reload to apply animation
+    _load_artboard();
 }
 
 String RiveFileInstance::get_animation_name() const {
@@ -90,24 +90,19 @@ bool RiveFileInstance::get_auto_play() const {
 void RiveFileInstance::_load_artboard() {
     if (rive_file_resource.is_null()) return;
     
-    // Reset existing
     artboard.reset();
     state_machine.reset();
     animation.reset();
 
-    // Use RiveFile to instantiate artboard (handles both Rive and SVG)
     artboard = rive_file_resource->instantiate_artboard(artboard_name);
 
     if (!artboard) return;
 
-    // Load State Machine or Animation
     if (!state_machine_name.is_empty()) {
         state_machine = artboard->stateMachineNamed(state_machine_name.utf8().get_data());
     } else if (artboard->stateMachineCount() > 0) {
-        // Default to first state machine if available and no animation specified?
-        // Or maybe we should be explicit.
-        // Let's try to load default state machine if no name provided
-        state_machine = artboard->stateMachineAt(0);
+        // FIXME: Default to first state machine if available and no animation specified?
+        state_machine = artboard->stateMachineAt(0); 
     }
 
     if (!state_machine && !animation_name.is_empty()) {
@@ -154,24 +149,11 @@ void RiveFileInstance::draw(rive::Renderer *renderer) {
 }
 
 bool RiveFileInstance::hit_test(Vector2 point) {
-    // Point is in parent space (CanvasLayer space)
-    // We need to transform it to local space?
-    // Rive hitTest expects coordinates in the artboard space?
-    // No, Rive hitTest usually works with the transformed components.
-    // But here we are transforming the renderer.
-    
-    // If we want to hit test, we should probably transform the point into the Node's local space
-    // and then check against the artboard bounds?
-    // Or better, let Rive handle it if we can pass the transform.
-    
-    // For now, simple bounding box check or just return false.
-    // Implementing proper hit test requires more complex logic with Rive.
     return false; 
 }
 
 void RiveFileInstance::pointer_down(Vector2 position) {
     if (state_machine) {
-        // Transform position to local space
         Transform2D inv = get_transform().affine_inverse();
         Vector2 local = inv.xform(position);
         state_machine->pointerDown(rive::Vec2D(local.x, local.y));

@@ -5,7 +5,7 @@
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include "rive/file.hpp"
 #include "rive/artboard.hpp"
-#include "rive_render_registry.h"
+#include "../renderer/rive_render_registry.h"
 #include "../rive_svg.h"
 
 using namespace godot;

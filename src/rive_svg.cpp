@@ -278,7 +278,6 @@ std::unique_ptr<rive::ArtboardInstance> RiveSVG::instantiate_artboard() {
 }
 
 Ref<RiveSVG> RiveSVG::instance() {
-    // UtilityFunctions::print("RiveSVG::instance called");
     Ref<RiveSVG> new_svg;
     new_svg.instantiate();
     

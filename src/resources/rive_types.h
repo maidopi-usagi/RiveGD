@@ -6,7 +6,7 @@
 #include "rive/renderer.hpp"
 #include "rive/factory.hpp"
 #include "rive/math/mat2d.hpp"
-#include "../rive_render_registry.h"
+#include "../renderer/rive_render_registry.h"
 
 using namespace godot;
 

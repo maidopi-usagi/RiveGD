@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="GithubDefaultAccount">
+    <option name="defaultAccountId" value="c61e8852-05c7-44b8-a730-76e9f44688c1" />
+  </component>
+  <component name="XMakeProjectSettings">
+    <option name="currentArchitecture" value="x86" />
+    <option name="workingDirectory" value="$PROJECT_DIR$" />
+  </component>
+</project>

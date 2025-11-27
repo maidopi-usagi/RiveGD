@@ -94,9 +94,9 @@ bool create_d3d12_context(RenderingDevice* rd) {
 	g_intermediate_width = 0;
 	g_intermediate_height = 0;
 	g_fence_value = 0;
-	g_frame_idx = 2; // Start at 2 to match Fiddle logic
+	g_frame_idx = 2; // Start at 2 to match Fiddle logic, maybe unneccesory.
 
-	// Create temporary command list for initialization
+	// Temp command list for intialization
 	ComPtr<ID3D12CommandAllocator> allocator;
 	device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&allocator));
 	ComPtr<ID3D12GraphicsCommandList> command_list;
@@ -131,10 +131,8 @@ bool create_d3d12_context(RenderingDevice* rd) {
 		return false;
 	}
 
-	// Execute initialization commands
 	command_list->Close();
 
-	// Create persistent command queue and fence
 	D3D12_COMMAND_QUEUE_DESC queue_desc = {};
 	queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 	queue_desc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
@@ -153,7 +151,6 @@ bool create_d3d12_context(RenderingDevice* rd) {
 	}
 	g_fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 
-	// Wait for initialization to finish
 	g_fence_value++;
 	g_command_queue->Signal(g_fence.Get(), g_fence_value);
 	if (g_fence->GetCompletedValue() < g_fence_value) {
@@ -267,7 +264,6 @@ void render_texture_d3d12(RenderingDevice *rd, RID texture_rid, RiveDrawable *dr
 	ID3D12CommandList *ppCommandLists[] = { command_list.Get() };
 	g_command_queue->ExecuteCommandLists(1, ppCommandLists);
 
-	// Signal and wait
 	g_fence_value++;
 	g_command_queue->Signal(g_fence.Get(), g_fence_value);
 

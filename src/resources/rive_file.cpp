@@ -18,9 +18,9 @@ RiveFile::~RiveFile() {
 
 void RiveFile::set_data(const PackedByteArray &p_data) {
     data = p_data;
-    // In editor, we might want to load immediately to check validity, 
+    // FIXME: In editor, we might want to load immediately to check validity, 
     // but usually we load on demand or when the resource is loaded.
-    // For now, let's clear the cached file so it reloads if data changes.
+    // For now, reload will lead to crash.
     rive_file.reset();
     rive_svg.unref();
 }
@@ -33,10 +33,9 @@ Error RiveFile::load_rive_file() {
     if (rive_file || rive_svg.is_valid()) return OK;
     if (data.is_empty()) return ERR_INVALID_DATA;
 
-    // Check if it's SVG
+    // FIXME: Hardcoded check if it's SVG.
     String signature = "";
     if (data.size() > 10) {
-        // Read first few bytes
         const uint8_t* ptr = data.ptr();
         for(int i=0; i<10; i++) {
             if (ptr[i] != 0) signature += (char)ptr[i];

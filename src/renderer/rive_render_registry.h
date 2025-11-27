@@ -4,7 +4,6 @@
 #include <vector>
 #include <mutex>
 
-// Forward declare Rive types
 namespace rive {
     class Renderer;
     class Factory;
@@ -37,7 +36,6 @@ public:
     void add_drawable(RiveDrawable* drawable);
     void remove_drawable(RiveDrawable* drawable);
     
-    // This should be called by the rendering thread
     void draw_all(rive::Renderer* renderer);
 };
 

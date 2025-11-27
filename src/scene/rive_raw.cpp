@@ -15,7 +15,6 @@ void RiveRaw::draw(rive::Renderer* renderer) {
     if (renderer_wrapper.is_valid()) {
         renderer_wrapper->set_renderer(renderer);
         
-        // Apply transform
         renderer->save();
         Transform2D xform = get_transform();
         rive::Mat2D rive_transform(

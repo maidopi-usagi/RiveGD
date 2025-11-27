@@ -1,6 +1,6 @@
 #include "rive_canvas_2d.h"
 #include "rive_node.h"
-#include "../rive_renderer.h"
+#include "../renderer/rive_renderer.h"
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/classes/rendering_device.hpp>
@@ -54,7 +54,6 @@ Vector2i RiveCanvas2D::get_size() const {
 }
 
 void RiveCanvas2D::_process(double delta) {
-    // Advance animations
     for (int i = 0; i < get_child_count(); i++) {
         RiveNode *node = Object::cast_to<RiveNode>(get_child(i));
         if (node) {
@@ -71,22 +70,20 @@ void RiveCanvas2D::_draw() {
     RenderingDevice *rd = RenderingServer::get_singleton()->get_rendering_device();
     if (!rd) return;
 
-    // Ensure texture exists and is correct size
     if (texture_rid.is_valid()) {
         Ref<RDTextureFormat> format = rd->texture_get_format(texture_rid);
         if (!format.is_valid()) {
-            // Texture is invalid, just clear it
+            // Texture is invalid, so clear it
             texture_rid = RID();
             if (texture_rd.is_valid()) {
                 texture_rd->set_texture_rd_rid(RID());
             }
         } else if (format->get_width() != size.x || format->get_height() != size.y) {
-            // Recreate
             if (texture_rd.is_valid()) {
                 texture_rd->set_texture_rd_rid(RID());
             }
             rd->free_rid(texture_rid);
-            texture_rid = RID(); // Invalidate
+            texture_rid = RID();
         }
     }
 
@@ -105,10 +102,8 @@ void RiveCanvas2D::_draw() {
         texture_rd->set_texture_rd_rid(texture_rid);
     }
 
-    // Render Rive content to texture
     rive_integration::render_texture(rd, texture_rid, this, size.x, size.y);
     
-    // Draw the texture to the Node2D
     draw_texture(texture_rd, Point2(0, 0));
 }
 

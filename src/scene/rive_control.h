@@ -9,7 +9,7 @@
 #include <godot_cpp/classes/input_event_mouse_motion.hpp>
 #include <godot_cpp/classes/input_event_mouse_button.hpp>
 
-#include "rive_render_registry.h"
+#include "renderer/rive_render_registry.h"
 #include <rive/file.hpp>
 #include <rive/artboard.hpp>
 #include <rive/animation/linear_animation_instance.hpp>

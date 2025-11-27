@@ -49,14 +49,11 @@ public:
     void set_auto_play(bool p_auto);
     bool get_auto_play() const;
 
-    // Called by RiveCanvasLayer
     void advance(double delta) override;
     void draw(rive::Renderer *renderer) override;
     
-    // Hit testing
     bool hit_test(Vector2 point);
-    
-    // Input handling
+
     void pointer_down(Vector2 position) override;
     void pointer_up(Vector2 position) override;
     void pointer_move(Vector2 position) override;

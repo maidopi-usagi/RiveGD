@@ -35,7 +35,7 @@ static void* get_gl_proc(const char* name) {
 static void* get_gl_proc(const char* name) {
     static void* libgl = nullptr;
     if (!libgl) {
-        // Try common names
+        // FIXME: Try common names.
         libgl = dlopen("libGL.so", RTLD_LAZY);
         if (!libgl) libgl = dlopen("libGL.so.1", RTLD_LAZY);
         if (!libgl) libgl = dlopen("/System/Library/Frameworks/OpenGL.framework/OpenGL", RTLD_LAZY);
@@ -55,7 +55,6 @@ bool create_opengl_context() {
         return false;
     }
 
-    // Create Rive RenderContext
     g_rive_context = RenderContextGLImpl::MakeContext({}).release();
 
     if (!g_rive_context) {

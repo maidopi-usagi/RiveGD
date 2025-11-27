@@ -25,7 +25,6 @@ public:
         float cx, cy; // Center for animation
     };
 
-    // Shared data container to be used by RiveSVGDrawable
     struct Data : public RefCounted {
         Vector<Shape> shapes;
     };

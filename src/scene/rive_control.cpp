@@ -1,5 +1,5 @@
 #include "rive_control.h"
-#include "../rive_renderer.h"
+#include "../renderer/rive_renderer.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/rendering_device.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>

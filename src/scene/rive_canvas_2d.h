@@ -3,7 +3,7 @@
 
 #include <godot_cpp/classes/node2d.hpp>
 #include <godot_cpp/classes/texture2drd.hpp>
-#include "../rive_render_registry.h"
+#include "../renderer/rive_render_registry.h"
 #include <rive/renderer.hpp>
 
 using namespace godot;
@@ -27,10 +27,8 @@ public:
     void set_size(const Vector2i &p_size);
     Vector2i get_size() const;
 
-    // RiveDrawable implementation
     void draw(rive::Renderer *renderer) override;
     
-    // Godot overrides
     void _process(double delta) override;
     void _draw() override;
 };
