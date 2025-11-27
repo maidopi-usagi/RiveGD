@@ -25,12 +25,11 @@ void RiveFileInstance::_bind_methods() {
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_play"), "set_auto_play", "get_auto_play");
 }
 
-RiveFileInstance::RiveFileInstance() {}
+RiveFileInstance::RiveFileInstance() {
+    rive_player.instantiate();
+}
 
 RiveFileInstance::~RiveFileInstance() {
-    artboard.reset();
-    state_machine.reset();
-    animation.reset();
 }
 
 void RiveFileInstance::_notification(int p_what) {
@@ -89,49 +88,34 @@ bool RiveFileInstance::get_auto_play() const {
 
 void RiveFileInstance::_load_artboard() {
     if (rive_file_resource.is_null()) return;
+    if (!rive_player.is_valid()) return;
     
-    artboard.reset();
-    state_machine.reset();
-    animation.reset();
-
-    artboard = rive_file_resource->instantiate_artboard(artboard_name);
+    std::unique_ptr<rive::ArtboardInstance> artboard = rive_file_resource->instantiate_artboard(artboard_name);
 
     if (!artboard) return;
 
-    if (!state_machine_name.is_empty()) {
-        state_machine = artboard->stateMachineNamed(state_machine_name.utf8().get_data());
-    } else if (artboard->stateMachineCount() > 0) {
-        // FIXME: Default to first state machine if available and no animation specified?
-        state_machine = artboard->stateMachineAt(0); 
+    rive::rcp<rive::File> file;
+    if (rive_file_resource->get_rive_file()) {
+        file = rive::rcp<rive::File>(rive_file_resource->get_rive_file());
     }
 
-    if (!state_machine && !animation_name.is_empty()) {
-        animation = artboard->animationNamed(animation_name.utf8().get_data());
-    } else if (!state_machine && artboard->animationCount() > 0) {
-        animation = artboard->animationAt(0);
-    }
-    
-    if (artboard) {
-        artboard->advance(0.0f);
+    rive_player->set_artboard(std::move(artboard), file);
+
+    if (!state_machine_name.is_empty()) {
+        rive_player->play_state_machine(state_machine_name);
+    } else if (!animation_name.is_empty()) {
+        rive_player->play_animation(animation_name);
     }
 }
 
 void RiveFileInstance::advance(double delta) {
-    if (!artboard) return;
+    if (!rive_player.is_valid()) return;
     if (!auto_play) return;
-
-    if (state_machine) {
-        state_machine->advance(delta);
-    } else if (animation) {
-        animation->advance(delta);
-        animation->apply();
-    }
-    
-    artboard->advance(delta);
+    rive_player->advance(delta);
 }
 
 void RiveFileInstance::draw(rive::Renderer *renderer) {
-    if (!artboard) return;
+    if (!rive_player.is_valid()) return;
     
     renderer->save();
     
@@ -142,44 +126,64 @@ void RiveFileInstance::draw(rive::Renderer *renderer) {
         xform.columns[2].x, xform.columns[2].y
     );
     
-    renderer->transform(rive_transform);
-    artboard->draw(renderer);
+    rive_player->draw(renderer, rive_transform);
     
     renderer->restore();
 }
 
 Rect2 RiveFileInstance::get_rive_bounds() const {
-    if (artboard) {
-        rive::AABB aabb = artboard->bounds();
+    if (rive_player.is_valid() && rive_player->get_artboard()) {
+        rive::AABB aabb = rive_player->get_artboard()->bounds();
         return Rect2(aabb.minX, aabb.minY, aabb.width(), aabb.height());
     }
     return Rect2();
 }
 
 bool RiveFileInstance::hit_test(Vector2 point) {
+    if (rive_player.is_valid()) {
+        Transform2D xform = get_transform();
+        rive::Mat2D rive_transform(
+            xform.columns[0].x, xform.columns[0].y,
+            xform.columns[1].x, xform.columns[1].y,
+            xform.columns[2].x, xform.columns[2].y
+        );
+        return rive_player->hit_test(point, rive_transform);
+    }
     return false; 
 }
 
 void RiveFileInstance::pointer_down(Vector2 position) {
-    if (state_machine) {
-        Transform2D inv = get_transform().affine_inverse();
-        Vector2 local = inv.xform(position);
-        state_machine->pointerDown(rive::Vec2D(local.x, local.y));
+    if (rive_player.is_valid()) {
+        Transform2D xform = get_transform();
+        rive::Mat2D rive_transform(
+            xform.columns[0].x, xform.columns[0].y,
+            xform.columns[1].x, xform.columns[1].y,
+            xform.columns[2].x, xform.columns[2].y
+        );
+        rive_player->pointer_down(position, rive_transform);
     }
 }
 
 void RiveFileInstance::pointer_up(Vector2 position) {
-    if (state_machine) {
-        Transform2D inv = get_transform().affine_inverse();
-        Vector2 local = inv.xform(position);
-        state_machine->pointerUp(rive::Vec2D(local.x, local.y));
+    if (rive_player.is_valid()) {
+        Transform2D xform = get_transform();
+        rive::Mat2D rive_transform(
+            xform.columns[0].x, xform.columns[0].y,
+            xform.columns[1].x, xform.columns[1].y,
+            xform.columns[2].x, xform.columns[2].y
+        );
+        rive_player->pointer_up(position, rive_transform);
     }
 }
 
 void RiveFileInstance::pointer_move(Vector2 position) {
-    if (state_machine) {
-        Transform2D inv = get_transform().affine_inverse();
-        Vector2 local = inv.xform(position);
-        state_machine->pointerMove(rive::Vec2D(local.x, local.y));
+    if (rive_player.is_valid()) {
+        Transform2D xform = get_transform();
+        rive::Mat2D rive_transform(
+            xform.columns[0].x, xform.columns[0].y,
+            xform.columns[1].x, xform.columns[1].y,
+            xform.columns[2].x, xform.columns[2].y
+        );
+        rive_player->pointer_move(position, rive_transform);
     }
 }

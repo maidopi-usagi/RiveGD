@@ -5,6 +5,7 @@
 #include <godot_cpp/classes/texture2drd.hpp>
 #include <godot_cpp/templates/local_vector.hpp>
 #include "../renderer/rive_render_registry.h"
+#include "../renderer/rive_texture_target.h"
 #include "rive_node.h"
 #include <rive/renderer.hpp>
 
@@ -14,10 +15,8 @@ class RiveCanvas2D : public Node2D, public RiveDrawable {
     GDCLASS(RiveCanvas2D, Node2D);
 
 private:
-    Ref<Texture2DRD> texture_rd;
-    RID texture_rid;
+    Ref<RiveTextureTarget> texture_target;
     Vector2i size = Vector2i(512, 512);
-    Vector2i texture_size;
     
     LocalVector<RiveNode*> active_nodes;
     double current_delta = 0.0;

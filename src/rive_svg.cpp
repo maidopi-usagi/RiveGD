@@ -241,6 +241,11 @@ void RiveSVG::parse(String xml_content) {
     importer.addComponent(drawable);
     
     source_artboard->initialize();
+    
+    if (image) {
+        source_artboard->width(image->width);
+        source_artboard->height(image->height);
+    }
     // Disable clip to avoid using m_Factory which is null
     source_artboard->clip(false);
 

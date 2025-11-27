@@ -10,11 +10,8 @@
 #include <godot_cpp/classes/input_event_mouse_button.hpp>
 
 #include "renderer/rive_render_registry.h"
-#include <rive/file.hpp>
-#include <rive/artboard.hpp>
-#include <rive/animation/linear_animation_instance.hpp>
-#include <rive/animation/state_machine_instance.hpp>
-#include <rive/viewmodel/viewmodel_instance.hpp>
+#include "rive_player.h"
+#include "../renderer/rive_texture_target.h"
 
 using namespace godot;
 
@@ -23,18 +20,8 @@ class RiveControl : public Control, public RiveDrawable
     GDCLASS(RiveControl, Control);
 
     String file_path;
-    rive::rcp<rive::File> rive_file;
-    std::unique_ptr<rive::ArtboardInstance> artboard;
-    std::unique_ptr<rive::LinearAnimationInstance> animation;
-    std::unique_ptr<rive::StateMachineInstance> state_machine;
-    rive::rcp<rive::ViewModelInstance> view_model_instance;
-
-    RID texture_rid;
-    Ref<Texture2DRD> texture_rd_ref; // Keep reference if using RD
-    Size2i texture_size;
-
-    String current_animation;
-    String current_state_machine;
+    Ref<RivePlayer> rive_player;
+    Ref<RiveTextureTarget> texture_target;
 
     struct RiveProperty
     {

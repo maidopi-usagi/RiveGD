@@ -15,6 +15,8 @@
 #include "scene/rive_control.h"
 #include "scene/rive_canvas_2d.h"
 #include "scene/rive_raw.h"
+#include "scene/rive_player.h"
+#include "renderer/rive_texture_target.h"
 #include "editor/rive_editor_plugin.h"
 #include <godot_cpp/classes/editor_plugin_registration.hpp>
 
@@ -34,6 +36,9 @@ void initialize_rive_module(ModuleInitializationLevel p_level) {
         ClassDB::register_class<RiveMultiInstance>();
         ClassDB::register_class<RiveRaw>();
         ClassDB::register_class<RiveCanvas2D>();
+        
+        ClassDB::register_class<RivePlayer>();
+        ClassDB::register_class<RiveTextureTarget>();
         
         // Initialize renderer
     }

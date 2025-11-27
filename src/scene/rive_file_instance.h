@@ -3,9 +3,7 @@
 
 #include "rive_node.h"
 #include "../resources/rive_file.h"
-#include <rive/artboard.hpp>
-#include <rive/animation/state_machine_instance.hpp>
-#include <rive/animation/linear_animation_instance.hpp>
+#include "rive_player.h"
 
 using namespace godot;
 
@@ -14,9 +12,7 @@ class RiveFileInstance : public RiveNode {
 
 private:
     Ref<RiveFile> rive_file_resource;
-    std::unique_ptr<rive::ArtboardInstance> artboard;
-    std::unique_ptr<rive::StateMachineInstance> state_machine;
-    std::unique_ptr<rive::LinearAnimationInstance> animation;
+    Ref<RivePlayer> rive_player;
     
     String artboard_name;
     String state_machine_name;

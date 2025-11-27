@@ -4,8 +4,6 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/classes/rendering_device.hpp>
-#include <godot_cpp/classes/rd_texture_format.hpp>
-#include <godot_cpp/classes/rd_texture_view.hpp>
 #include <godot_cpp/classes/worker_thread_pool.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
@@ -19,21 +17,12 @@ void RiveCanvas2D::_bind_methods() {
 }
 
 RiveCanvas2D::RiveCanvas2D() {
-    texture_rd.instantiate();
+    texture_target.instantiate();
 }
 
 RiveCanvas2D::~RiveCanvas2D() {
-    if (texture_rid.is_valid()) {
-        RenderingServer *rs = RenderingServer::get_singleton();
-        if (rs) {
-            RenderingDevice *rd = rs->get_rendering_device();
-            if (rd) {
-                if (texture_rd.is_valid()) {
-                    texture_rd->set_texture_rd_rid(RID());
-                }
-                rd->free_rid(texture_rid);
-            }
-        }
+    if (texture_target.is_valid()) {
+        texture_target->clear();
     }
 }
 
@@ -57,7 +46,10 @@ Vector2i RiveCanvas2D::get_size() const {
 }
 
 Ref<Texture2D> RiveCanvas2D::get_texture() const {
-    return texture_rd;
+    if (texture_target.is_valid()) {
+        return texture_target->get_texture_rd();
+    }
+    return Ref<Texture2D>();
 }
 
 void RiveCanvas2D::_advance_node(uint32_t p_index) {
@@ -86,54 +78,20 @@ void RiveCanvas2D::_process(double delta) {
 
 void RiveCanvas2D::_draw() {
     if (size.x <= 0 || size.y <= 0) return;
-    
+    if (!texture_target.is_valid()) return;
+
+    texture_target->resize(size);
+
     RenderingServer *rs = RenderingServer::get_singleton();
     if (!rs) return;
     RenderingDevice *rd = rs->get_rendering_device();
-    
-    String driver = rs->get_current_rendering_driver_name();
-    bool is_opengl = (driver == "opengl3");
 
-    if (!rd && !is_opengl) return;
+    rive_integration::render_texture(rd, texture_target->get_texture_rid(), this, size.x, size.y);
 
-    if (texture_size != size) {
-        if (texture_rid.is_valid()) {
-            if (texture_rd.is_valid()) {
-                texture_rd->set_texture_rd_rid(RID());
-                if (rd) rd->free_rid(texture_rid);
-            } else {
-                rs->free_rid(texture_rid);
-            }
-            texture_rid = RID();
-        }
-
-        if (rd) {
-            Ref<RDTextureFormat> format;
-            format.instantiate();
-            format->set_format(RenderingDevice::DATA_FORMAT_R8G8B8A8_UNORM);
-            format->set_width(size.x);
-            format->set_height(size.y);
-            format->set_usage_bits(RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_CAN_COPY_FROM_BIT);
-            format->set_texture_type(RenderingDevice::TEXTURE_TYPE_2D);
-            
-            Ref<RDTextureView> view;
-            view.instantiate();
-            texture_rid = rd->texture_create(format, view, TypedArray<PackedByteArray>());
-            texture_rd->set_texture_rd_rid(texture_rid);
-        } else {
-            Ref<Image> img = Image::create(size.x, size.y, false, Image::FORMAT_RGBA8);
-            texture_rid = rs->texture_2d_create(img);
-            texture_rd.unref();
-        }
-        texture_size = size;
-    }
-
-    if (rd) {
-        rive_integration::render_texture(rd, texture_rid, this, size.x, size.y);
-        draw_texture(texture_rd, Point2(0, 0));
-    } else {
-        rive_integration::render_texture(nullptr, texture_rid, this, size.x, size.y);
-        rs->canvas_item_add_texture_rect(get_canvas_item(), Rect2(Point2(), size), texture_rid);
+    if (texture_target->get_texture_rd().is_valid()) {
+        draw_texture(texture_target->get_texture_rd(), Point2(0, 0));
+    } else if (texture_target->get_texture_rid().is_valid()) {
+        rs->canvas_item_add_texture_rect(get_canvas_item(), Rect2(Point2(), size), texture_target->get_texture_rid());
     }
 }
 

@@ -1,10 +1,9 @@
 #include "rive_control.h"
 #include "../renderer/rive_renderer.h"
+#include "../rive_constants.h"
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/rendering_device.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>
-#include <godot_cpp/classes/rd_texture_format.hpp>
-#include <godot_cpp/classes/rd_texture_view.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/core/error_macros.hpp>
 
@@ -21,8 +20,6 @@
 #include <rive/viewmodel/data_enum_value.hpp>
 
 using namespace godot;
-
-
 
 void RiveControl::_bind_methods()
 {
@@ -46,7 +43,7 @@ void RiveControl::_bind_methods()
     ClassDB::bind_method(D_METHOD("set_enum_value", "property_path", "value"), &RiveControl::set_enum_value);
     ClassDB::bind_method(D_METHOD("set_color_value", "property_path", "value"), &RiveControl::set_color_value);
 
-    ADD_PROPERTY(PropertyInfo(Variant::STRING, "file_path", PROPERTY_HINT_FILE, "*.riv"), "set_file_path", "get_file_path");
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "file_path", PROPERTY_HINT_FILE, RiveConstants::EXTENSION), "set_file_path", "get_file_path");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "animation_name"), "set_animation_name", "get_animation_name");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "state_machine_name"), "set_state_machine_name", "get_state_machine_name");
 }
@@ -54,31 +51,15 @@ void RiveControl::_bind_methods()
 RiveControl::RiveControl()
 {
     set_mouse_filter(MOUSE_FILTER_STOP);
+    rive_player.instantiate();
+    texture_target.instantiate();
 }
 
 RiveControl::~RiveControl()
 {
-    if (texture_rid.is_valid())
-    {
-        RenderingServer *rs = RenderingServer::get_singleton();
-        if (rs)
-        {
-            RenderingDevice *rd = rs->get_rendering_device();
-            if (texture_rd_ref.is_valid())
-            {
-                texture_rd_ref->set_texture_rd_rid(RID());
-                if (rd)
-                {
-                    rd->free_rid(texture_rid);
-                }
-            }
-            else
-            {
-                rs->free_rid(texture_rid);
-            }
-        }
+    if (texture_target.is_valid()) {
+        texture_target->clear();
     }
-    texture_rd_ref.unref();
 }
 
 void RiveControl::_notification(int p_what)
@@ -94,29 +75,23 @@ void RiveControl::_notification(int p_what)
     case NOTIFICATION_RESIZED:
         break;
     case NOTIFICATION_DRAW:
-        if (texture_rd_ref.is_valid())
+        if (texture_target.is_valid())
         {
-            draw_texture(texture_rd_ref, Point2());
-        }
-        else if (texture_rid.is_valid())
-        {
-            RenderingServer::get_singleton()->canvas_item_add_texture_rect(get_canvas_item(), Rect2(Point2(), get_size()), texture_rid);
+            if (texture_target->get_texture_rd().is_valid())
+            {
+                draw_texture(texture_target->get_texture_rd(), Point2());
+            }
+            else if (texture_target->get_texture_rid().is_valid())
+            {
+                RenderingServer::get_singleton()->canvas_item_add_texture_rect(get_canvas_item(), Rect2(Point2(), get_size()), texture_target->get_texture_rid());
+            }
         }
         break;
     case NOTIFICATION_PROCESS:
-        if (artboard)
+        if (rive_player.is_valid())
         {
             float delta = get_process_delta_time();
-            if (state_machine)
-            {
-                state_machine->advance(delta);
-            }
-            else if (animation)
-            {
-                animation->advance(delta);
-                animation->apply();
-            }
-            artboard->advance(delta);
+            rive_player->advance(delta);
             _render_rive();
             queue_redraw();
         }
@@ -130,66 +105,15 @@ void RiveControl::_render_rive()
     if (size.width <= 0 || size.height <= 0)
         return;
 
+    if (!texture_target.is_valid()) return;
+
+    texture_target->resize(size);
+
     RenderingServer *rs = RenderingServer::get_singleton();
-    if (!rs)
-        return;
+    if (!rs) return;
     RenderingDevice *rd = rs->get_rendering_device();
-    
-    String driver = rs->get_current_rendering_driver_name();
-    bool is_opengl = (driver == "opengl3");
 
-    if (!rd && !is_opengl)
-        return;
-
-    if (texture_size != size)
-    {
-        if (texture_rid.is_valid())
-        {
-            if (texture_rd_ref.is_valid())
-            {
-                texture_rd_ref->set_texture_rd_rid(RID());
-                if (rd)
-                {
-                    rd->free_rid(texture_rid);
-                }
-            }
-            else
-            {
-                rs->free_rid(texture_rid);
-            }
-            texture_rid = RID();
-        }
-
-        if (rd)
-        {
-            Ref<RDTextureFormat> tf;
-            tf.instantiate();
-            tf->set_format(RenderingDevice::DATA_FORMAT_R8G8B8A8_UNORM);
-            tf->set_width(size.width);
-            tf->set_height(size.height);
-            tf->set_usage_bits(RenderingDevice::TEXTURE_USAGE_SAMPLING_BIT | RenderingDevice::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT | RenderingDevice::TEXTURE_USAGE_CAN_COPY_FROM_BIT);
-
-            Ref<RDTextureView> tv;
-            tv.instantiate();
-
-            texture_rid = rd->texture_create(tf, tv);
-            
-            if (texture_rd_ref.is_null())
-            {
-                texture_rd_ref.instantiate();
-            }
-            texture_rd_ref->set_texture_rd_rid(texture_rid);
-        }
-        else
-        {
-            Ref<Image> img = Image::create(size.width, size.height, false, Image::FORMAT_RGBA8);
-            texture_rid = rs->texture_2d_create(img);
-            texture_rd_ref.unref();
-        }
-        texture_size = size;
-    }
-
-    rive_integration::render_texture(rd, texture_rid, this, size.width, size.height);
+    rive_integration::render_texture(rd, texture_target->get_texture_rid(), this, size.width, size.height);
 }
 
 void RiveControl::set_file_path(const String &p_path)
@@ -221,141 +145,34 @@ void RiveControl::load_file()
     uint64_t len = f->get_length();
     PackedByteArray data = f->get_buffer(len);
 
-    rive::Factory *factory = RiveRenderRegistry::get_singleton()->get_factory();
-    if (!factory)
-    {
-        ERR_PRINT("Rive factory not available (context not created?)");
-        return;
-    }
-
-    rive::Span<const uint8_t> bytes(data.ptr(), data.size());
-    rive::ImportResult result;
-    rive::rcp<rive::File> file = rive::File::import(bytes, factory, &result);
-
-    if (file)
-    {
-        state_machine.reset();
-        animation.reset();
-        view_model_instance = nullptr;
-        artboard.reset();
-        rive_file.reset();
-
-        rive_file = file;
-        artboard = rive_file->artboardDefault();
-        if (artboard)
-        {
-            artboard->advance(0.0f);
-
-            int viewModelId = artboard->viewModelId();
-            if (viewModelId != -1)
-            {
-                view_model_instance = rive_file->createViewModelInstance(viewModelId, 0);
-            }
-
-            if (!view_model_instance)
-            {
-                view_model_instance = rive_file->createViewModelInstance(artboard.get());
-            }
-
-            // Try to load specified state machine or animation
-            if (!current_state_machine.is_empty())
-            {
-                state_machine = artboard->stateMachineNamed(current_state_machine.utf8().get_data());
-            }
-
-            if (!state_machine && !current_animation.is_empty())
-            {
-                animation = artboard->animationNamed(current_animation.utf8().get_data());
-            }
-
-            // Fallback to defaults if nothing specified or found
-            if (!state_machine && !animation)
-            {
-                if (artboard->stateMachineCount() > 0)
-                {
-                    state_machine = artboard->stateMachineAt(0);
-                    current_state_machine = state_machine->name().c_str();
-                    current_animation = "";
-                }
-                else if (artboard->animationCount() > 0)
-                {
-                    animation = artboard->animationAt(0);
-                    current_animation = animation->name().c_str();
-                    current_state_machine = "";
-                }
-            }
-
-            if (state_machine)
-            {
-                if (view_model_instance)
-                {
-                    state_machine->bindViewModelInstance(view_model_instance);
-                }
-            }
-            else if (animation)
-            {
-                if (view_model_instance)
-                {
-                    artboard->bindViewModelInstance(view_model_instance);
-                }
-            }
-
-            if (view_model_instance)
-            {
-                if (artboard)
-                    artboard->advance(0.0f);
-                if (state_machine)
-                    state_machine->advance(0.0f);
-                else if (animation)
-                    animation->advance(0.0f);
-            }
-
+    if (rive_player.is_valid()) {
+        if (rive_player->load_from_bytes(data)) {
             _update_property_list();
             notify_property_list_changed();
             UtilityFunctions::print_verbose("Rive file loaded successfully: " + file_path);
+        } else {
+            ERR_PRINT("Failed to import Rive file: " + file_path);
         }
-        else
-        {
-            ERR_PRINT("Rive file loaded but no default artboard found: " + file_path);
-        }
-    }
-    else
-    {
-        ERR_PRINT("Failed to import Rive file: " + file_path);
     }
 }
 
 void RiveControl::draw(rive::Renderer *renderer)
 {
-    if (artboard)
+    if (rive_player.is_valid())
     {
-        renderer->save();
-
-        rive::Mat2D transform = _get_rive_transform();
-
-        renderer->transform(transform);
-        artboard->draw(renderer);
-        renderer->restore();
+        rive_player->draw(renderer, _get_rive_transform());
     }
 }
 
 bool RiveControl::_has_point(const Vector2 &p_point) const
 {
-    if (!state_machine)
-        return false;
-
-    rive::Mat2D transform = _get_rive_transform();
-    rive::Mat2D inverse;
-    if (!transform.invert(&inverse))
-        return false;
-
-    rive::Vec2D rive_pos = inverse * rive::Vec2D(p_point.x, p_point.y);
-    return state_machine->hitTest(rive_pos);
+    if (!rive_player.is_valid()) return false;
+    return rive_player->hit_test(p_point, _get_rive_transform());
 }
 
 rive::Mat2D RiveControl::_get_rive_transform() const
 {
-    if (!artboard)
+    if (!rive_player.is_valid() || !rive_player->get_artboard())
         return rive::Mat2D();
 
     Size2i size = get_size();
@@ -363,31 +180,24 @@ rive::Mat2D RiveControl::_get_rive_transform() const
         rive::Fit::contain,
         rive::Alignment::center,
         rive::AABB(0, 0, size.width, size.height),
-        artboard->bounds());
+        rive_player->get_artboard()->bounds());
 }
 
 void RiveControl::_gui_input(const Ref<InputEvent> &p_event)
 {
-    if (!state_machine || !artboard)
-        return;
+    if (!rive_player.is_valid()) return;
 
     Ref<InputEventMouse> mouse_event = p_event;
     if (mouse_event.is_valid())
     {
-        rive::Mat2D transform = _get_rive_transform();
-        rive::Mat2D inverse;
-        if (!transform.invert(&inverse))
-            return;
-
         Vector2 local_pos = mouse_event->get_position();
-        rive::Vec2D rive_pos = inverse * rive::Vec2D(local_pos.x, local_pos.y);
-
-        rive::HitResult hit_result = rive::HitResult::none;
+        rive::Mat2D transform = _get_rive_transform();
+        bool hit = false;
 
         Ref<InputEventMouseMotion> motion = p_event;
         if (motion.is_valid())
         {
-            hit_result = state_machine->pointerMove(rive_pos);
+            hit = rive_player->pointer_move(local_pos, transform);
         }
 
         Ref<InputEventMouseButton> button = p_event;
@@ -397,16 +207,16 @@ void RiveControl::_gui_input(const Ref<InputEvent> &p_event)
             {
                 if (button->is_pressed())
                 {
-                    hit_result = state_machine->pointerDown(rive_pos);
+                    hit = rive_player->pointer_down(local_pos, transform);
                 }
                 else
                 {
-                    hit_result = state_machine->pointerUp(rive_pos);
+                    hit = rive_player->pointer_up(local_pos, transform);
                 }
             }
         }
 
-        if (hit_result != rive::HitResult::none)
+        if (hit)
         {
             accept_event();
         }
@@ -415,56 +225,24 @@ void RiveControl::_gui_input(const Ref<InputEvent> &p_event)
 
 void RiveControl::play_animation(const String &p_name)
 {
-    if (!artboard)
-        return;
-
-    state_machine.reset();
-
-    animation = artboard->animationNamed(p_name.utf8().get_data());
-    if (!animation)
-    {
-        ERR_PRINT("Animation not found: " + p_name);
-    }
+    if (rive_player.is_valid()) rive_player->play_animation(p_name);
 }
 
 void RiveControl::play_state_machine(const String &p_name)
 {
-    if (!artboard)
-        return;
-
-    animation.reset();
-
-    state_machine = artboard->stateMachineNamed(p_name.utf8().get_data());
-    if (!state_machine)
-    {
-        ERR_PRINT("State machine not found: " + p_name);
-    }
+    if (rive_player.is_valid()) rive_player->play_state_machine(p_name);
 }
 
 PackedStringArray RiveControl::get_animation_list() const
 {
-    PackedStringArray list;
-    if (artboard)
-    {
-        for (size_t i = 0; i < artboard->animationCount(); ++i)
-        {
-            list.push_back(String(artboard->animation(i)->name().c_str()));
-        }
-    }
-    return list;
+    if (rive_player.is_valid()) return rive_player->get_animation_list();
+    return PackedStringArray();
 }
 
 PackedStringArray RiveControl::get_state_machine_list() const
 {
-    PackedStringArray list;
-    if (artboard)
-    {
-        for (size_t i = 0; i < artboard->stateMachineCount(); ++i)
-        {
-            list.push_back(String(artboard->stateMachine(i)->name().c_str()));
-        }
-    }
-    return list;
+    if (rive_player.is_valid()) return rive_player->get_state_machine_list();
+    return PackedStringArray();
 }
 
 void RiveControl::_validate_property(PropertyInfo &p_property) const
@@ -499,32 +277,24 @@ void RiveControl::_validate_property(PropertyInfo &p_property) const
 
 void RiveControl::set_animation_name(const String &p_name)
 {
-    current_animation = p_name;
-    if (!p_name.is_empty())
-    {
-        play_animation(p_name);
-        current_state_machine = "";
-    }
+    if (rive_player.is_valid()) rive_player->play_animation(p_name);
 }
 
 String RiveControl::get_animation_name() const
 {
-    return current_animation;
+    if (rive_player.is_valid()) return rive_player->get_animation_name();
+    return "";
 }
 
 void RiveControl::set_state_machine_name(const String &p_name)
 {
-    current_state_machine = p_name;
-    if (!p_name.is_empty())
-    {
-        play_state_machine(p_name);
-        current_animation = "";
-    }
+    if (rive_player.is_valid()) rive_player->play_state_machine(p_name);
 }
 
 String RiveControl::get_state_machine_name() const
 {
-    return current_state_machine;
+    if (rive_player.is_valid()) return rive_player->get_state_machine_name();
+    return "";
 }
 
 static rive::ViewModelInstance *resolve_view_model_instance(rive::ViewModelInstance *root, const String &path, String &out_property_name)
@@ -556,11 +326,12 @@ static rive::ViewModelInstance *resolve_view_model_instance(rive::ViewModelInsta
 
 void RiveControl::set_text_value(const String &p_property_path, const String &p_value)
 {
-    if (!view_model_instance)
-        return;
+    if (!rive_player.is_valid()) return;
+    rive::ViewModelInstance *vm = rive_player->get_view_model_instance();
+    if (!vm) return;
 
     String prop_name;
-    rive::ViewModelInstance *target_vm = resolve_view_model_instance(view_model_instance.get(), p_property_path, prop_name);
+    rive::ViewModelInstance *target_vm = resolve_view_model_instance(vm, p_property_path, prop_name);
 
     if (target_vm)
     {
@@ -577,11 +348,12 @@ void RiveControl::set_text_value(const String &p_property_path, const String &p_
 
 void RiveControl::set_number_value(const String &p_property_path, float p_value)
 {
-    if (!view_model_instance)
-        return;
+    if (!rive_player.is_valid()) return;
+    rive::ViewModelInstance *vm = rive_player->get_view_model_instance();
+    if (!vm) return;
 
     String prop_name;
-    rive::ViewModelInstance *target_vm = resolve_view_model_instance(view_model_instance.get(), p_property_path, prop_name);
+    rive::ViewModelInstance *target_vm = resolve_view_model_instance(vm, p_property_path, prop_name);
 
     if (target_vm)
     {
@@ -598,11 +370,12 @@ void RiveControl::set_number_value(const String &p_property_path, float p_value)
 
 void RiveControl::set_boolean_value(const String &p_property_path, bool p_value)
 {
-    if (!view_model_instance)
-        return;
+    if (!rive_player.is_valid()) return;
+    rive::ViewModelInstance *vm = rive_player->get_view_model_instance();
+    if (!vm) return;
 
     String prop_name;
-    rive::ViewModelInstance *target_vm = resolve_view_model_instance(view_model_instance.get(), p_property_path, prop_name);
+    rive::ViewModelInstance *target_vm = resolve_view_model_instance(vm, p_property_path, prop_name);
 
     if (target_vm)
     {
@@ -619,11 +392,12 @@ void RiveControl::set_boolean_value(const String &p_property_path, bool p_value)
 
 void RiveControl::fire_trigger(const String &p_property_path)
 {
-    if (!view_model_instance)
-        return;
+    if (!rive_player.is_valid()) return;
+    rive::ViewModelInstance *vm = rive_player->get_view_model_instance();
+    if (!vm) return;
 
     String prop_name;
-    rive::ViewModelInstance *target_vm = resolve_view_model_instance(view_model_instance.get(), p_property_path, prop_name);
+    rive::ViewModelInstance *target_vm = resolve_view_model_instance(vm, p_property_path, prop_name);
 
     if (target_vm)
     {
@@ -715,9 +489,9 @@ void RiveControl::_collect_view_model_properties(rive::ViewModelInstance *vm, St
 void RiveControl::_update_property_list()
 {
     rive_properties.clear();
-    if (view_model_instance)
+    if (rive_player.is_valid())
     {
-        _collect_view_model_properties(view_model_instance.get(), "");
+        _collect_view_model_properties(rive_player->get_view_model_instance(), "");
     }
     notify_property_list_changed();
 }
@@ -728,11 +502,11 @@ void RiveControl::_get_property_list(List<PropertyInfo> *p_list) const
     {
         if (!prop.enum_hint.is_empty())
         {
-            p_list->push_back(PropertyInfo(prop.type, "rive/" + prop.path, PROPERTY_HINT_ENUM, prop.enum_hint));
+            p_list->push_back(PropertyInfo(prop.type, RiveConstants::PROPERTY_PREFIX + prop.path, PROPERTY_HINT_ENUM, prop.enum_hint));
         }
         else
         {
-            p_list->push_back(PropertyInfo(prop.type, "rive/" + prop.path));
+            p_list->push_back(PropertyInfo(prop.type, RiveConstants::PROPERTY_PREFIX + prop.path));
         }
     }
 }
@@ -740,15 +514,16 @@ void RiveControl::_get_property_list(List<PropertyInfo> *p_list) const
 bool RiveControl::_get(const StringName &p_name, Variant &r_ret) const
 {
     String name = p_name;
-    if (name.begins_with("rive/"))
+    if (name.begins_with(RiveConstants::PROPERTY_PREFIX))
     {
-        String path = name.substr(5);
+        String path = name.substr(String(RiveConstants::PROPERTY_PREFIX).length());
 
-        if (!view_model_instance)
-            return false;
+        if (!rive_player.is_valid()) return false;
+        rive::ViewModelInstance *vm = rive_player->get_view_model_instance();
+        if (!vm) return false;
 
         String prop_name;
-        rive::ViewModelInstance *target_vm = resolve_view_model_instance(view_model_instance.get(), path, prop_name);
+        rive::ViewModelInstance *target_vm = resolve_view_model_instance(vm, path, prop_name);
 
         if (target_vm)
         {
@@ -799,9 +574,9 @@ bool RiveControl::_get(const StringName &p_name, Variant &r_ret) const
 bool RiveControl::_set(const StringName &p_name, const Variant &p_value)
 {
     String name = p_name;
-    if (name.begins_with("rive/"))
+    if (name.begins_with(RiveConstants::PROPERTY_PREFIX))
     {
-        String path = name.substr(5);
+        String path = name.substr(String(RiveConstants::PROPERTY_PREFIX).length());
 
         for (const RiveProperty &prop : rive_properties)
         {
@@ -848,11 +623,12 @@ bool RiveControl::_set(const StringName &p_name, const Variant &p_value)
 
 void RiveControl::set_enum_value(const String &p_property_path, int p_value)
 {
-    if (!view_model_instance)
-        return;
+    if (!rive_player.is_valid()) return;
+    rive::ViewModelInstance *vm = rive_player->get_view_model_instance();
+    if (!vm) return;
 
     String prop_name;
-    rive::ViewModelInstance *target_vm = resolve_view_model_instance(view_model_instance.get(), p_property_path, prop_name);
+    rive::ViewModelInstance *target_vm = resolve_view_model_instance(vm, p_property_path, prop_name);
 
     if (target_vm)
     {
@@ -869,11 +645,12 @@ void RiveControl::set_enum_value(const String &p_property_path, int p_value)
 
 void RiveControl::set_color_value(const String &p_property_path, Color p_value)
 {
-    if (!view_model_instance)
-        return;
+    if (!rive_player.is_valid()) return;
+    rive::ViewModelInstance *vm = rive_player->get_view_model_instance();
+    if (!vm) return;
 
     String prop_name;
-    rive::ViewModelInstance *target_vm = resolve_view_model_instance(view_model_instance.get(), p_property_path, prop_name);
+    rive::ViewModelInstance *target_vm = resolve_view_model_instance(vm, p_property_path, prop_name);
 
     if (target_vm)
     {
