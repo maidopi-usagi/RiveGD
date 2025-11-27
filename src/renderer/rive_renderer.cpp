@@ -11,11 +11,13 @@ namespace rive_integration {
 #if defined(VULKAN_ENABLED)
 bool create_vulkan_context(RenderingDevice* rd);
 void render_texture_vulkan(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height);
+void cleanup_vulkan_context();
 #endif
 
 #if defined(D3D12_ENABLED)
 bool create_d3d12_context(RenderingDevice* rd);
 void render_texture_d3d12(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height);
+void cleanup_d3d12_context();
 #endif
 
 #if defined(__APPLE__)
@@ -71,6 +73,24 @@ void initialize_rive_renderer() {
     } else {
         UtilityFunctions::printerr("Rive renderer initialization failed.");
     }
+}
+
+void cleanup_rive_renderer() {
+    RenderingServer *rs = RenderingServer::get_singleton();
+    if (!rs) return;
+
+    String api = rs->get_current_rendering_driver_name();
+
+    if (api == "d3d12") {
+#if defined(D3D12_ENABLED)
+        cleanup_d3d12_context();
+#endif
+    } else if (api == "vulkan") {
+#if defined(VULKAN_ENABLED)
+        cleanup_vulkan_context();
+#endif
+    }
+    // Add other backends cleanup if needed
 }
 
 void render_texture(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height) {

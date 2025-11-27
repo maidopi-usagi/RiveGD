@@ -49,6 +49,14 @@ class RivePaint : public RefCounted {
 
 private:
     rive::rcp<rive::RenderPaint> render_paint;
+    
+    // Cached properties
+    Color color = Color(0, 0, 0, 1);
+    float thickness = 1.0f;
+    int style = 1; // Fill
+    int join = 0;
+    int cap = 0;
+    int blend_mode = 3; // SrcOver
 
 protected:
     static void _bind_methods();
@@ -65,6 +73,7 @@ public:
     void set_blend_mode(int blend_mode);
 
     rive::RenderPaint* get_render_paint(rive::Factory* factory);
+    void _apply_properties();
 };
 
 class RiveRendererWrapper : public RefCounted {

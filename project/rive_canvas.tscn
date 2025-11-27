@@ -1,0 +1,26 @@
+[gd_scene load_steps=3 format=3 uid="uid://cd4thpux6x8wn"]
+
+[ext_resource type="RiveFile" uid="uid://dk5knwthjlsw4" path="res://Ghostscript_Tiger.svg" id="1_q4m11"]
+
+[sub_resource type="GDScript" id="GDScript_q4m11"]
+script/source = "extends Node2D
+
+func _ready():
+	var multi_rive = $RiveMultiInstance
+	var transforms = []
+	# 假设您原来的节点排列是网格状的
+	for y in range(10):
+		for x in range(10):
+			var t = Transform2D()
+			t.origin = Vector2(x * 100, y * 100)
+			transforms.append(t)
+	
+	multi_rive.transforms = transforms
+"
+
+[node name="RiveCanvas" type="RiveCanvas2D" unique_id=681268409]
+size = Vector2i(1152, 648)
+script = SubResource("GDScript_q4m11")
+
+[node name="RiveMultiInstance" type="RiveMultiInstance" parent="." unique_id=988182349]
+rive_file = ExtResource("1_q4m11")

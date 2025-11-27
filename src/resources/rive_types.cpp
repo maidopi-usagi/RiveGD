@@ -308,34 +308,39 @@ void RivePaint::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_blend_mode", "blend_mode"), &RivePaint::set_blend_mode);
 }
 
-void RivePaint::set_color(Color color) {
+void RivePaint::_apply_properties() {
+    if (!render_paint) return;
+    
+    unsigned int r = (unsigned int)(color.r * 255);
+    unsigned int g = (unsigned int)(color.g * 255);
+    unsigned int b = (unsigned int)(color.b * 255);
+    unsigned int a = (unsigned int)(color.a * 255);
+    
+    render_paint->color((a << 24) | (r << 16) | (g << 8) | b);
+    render_paint->thickness(thickness);
+    render_paint->style((rive::RenderPaintStyle)style);
+    render_paint->join((rive::StrokeJoin)join);
+    render_paint->cap((rive::StrokeCap)cap);
+    render_paint->blendMode((rive::BlendMode)blend_mode);
+}
+
+void RivePaint::set_color(Color p_color) {
+    color = p_color;
     if (!render_paint) {
         rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
         if (factory) render_paint = factory->makeRenderPaint();
     }
     if (render_paint) {
-        render_paint->color(0xFF000000 | ((int)(color.r * 255) << 16) | ((int)(color.g * 255) << 8) | (int)(color.b * 255));
-        // Alpha is handled differently in Rive? No, color is unsigned int.
-        // Rive color is 0xAABBGGRR? No, usually 0xAARRGGBB or similar.
-        // Rive uses 0xAABBGGRR (little endian) or 0xRRGGBBAA?
-        // Let's check Rive docs or source.
-        // Rive ColorInt is unsigned int.
-        // Usually it's 0xRRGGBBAA or 0xAARRGGBB.
-        // Let's assume standard 32-bit int.
-        // Actually, let's use Rive's color helper if available.
-        
         unsigned int r = (unsigned int)(color.r * 255);
         unsigned int g = (unsigned int)(color.g * 255);
         unsigned int b = (unsigned int)(color.b * 255);
         unsigned int a = (unsigned int)(color.a * 255);
-        
-        // Rive expects 0xAABBGGRR (on little endian?)
-        // Let's try:
         render_paint->color((a << 24) | (r << 16) | (g << 8) | b);
     }
 }
 
-void RivePaint::set_thickness(float thickness) {
+void RivePaint::set_thickness(float p_thickness) {
+    thickness = p_thickness;
     if (!render_paint) {
         rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
         if (factory) render_paint = factory->makeRenderPaint();
@@ -343,7 +348,8 @@ void RivePaint::set_thickness(float thickness) {
     if (render_paint) render_paint->thickness(thickness);
 }
 
-void RivePaint::set_style(int style) {
+void RivePaint::set_style(int p_style) {
+    style = p_style;
     if (!render_paint) {
         rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
         if (factory) render_paint = factory->makeRenderPaint();
@@ -351,7 +357,8 @@ void RivePaint::set_style(int style) {
     if (render_paint) render_paint->style((rive::RenderPaintStyle)style);
 }
 
-void RivePaint::set_join(int join) {
+void RivePaint::set_join(int p_join) {
+    join = p_join;
     if (!render_paint) {
         rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
         if (factory) render_paint = factory->makeRenderPaint();
@@ -359,7 +366,8 @@ void RivePaint::set_join(int join) {
     if (render_paint) render_paint->join((rive::StrokeJoin)join);
 }
 
-void RivePaint::set_cap(int cap) {
+void RivePaint::set_cap(int p_cap) {
+    cap = p_cap;
     if (!render_paint) {
         rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
         if (factory) render_paint = factory->makeRenderPaint();
@@ -367,7 +375,8 @@ void RivePaint::set_cap(int cap) {
     if (render_paint) render_paint->cap((rive::StrokeCap)cap);
 }
 
-void RivePaint::set_blend_mode(int blend_mode) {
+void RivePaint::set_blend_mode(int p_blend_mode) {
+    blend_mode = p_blend_mode;
     if (!render_paint) {
         rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
         if (factory) render_paint = factory->makeRenderPaint();
@@ -378,6 +387,7 @@ void RivePaint::set_blend_mode(int blend_mode) {
 rive::RenderPaint* RivePaint::get_render_paint(rive::Factory* factory) {
     if (!render_paint && factory) {
         render_paint = factory->makeRenderPaint();
+        _apply_properties();
     }
     return render_paint.get();
 }

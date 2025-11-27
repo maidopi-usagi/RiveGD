@@ -240,7 +240,10 @@ elif rive_env["platform"] in ["windows", "linuxbsd", "android"]:
         rive_env.Append(CXXFLAGS=["/std:c++20"])
         
         # Link system libraries
-        rive_env.Append(LIBS=["d3d12", "dxgi", "d3dcompiler", "opengl32", "vulkan-1", "dxguid", "uuid"])
+        rive_env.Append(LIBS=["d3d12", "dxgi", "d3dcompiler", "opengl32", "vulkan-1", "dxguid", "uuid", "delayimp"])
+        
+        # Delay load Vulkan to avoid crash if missing
+        rive_env.Append(LINKFLAGS=["/DELAYLOAD:vulkan-1.dll"])
 
         # Prioritize Godot build deps for D3DX12
         local_app_data = os.environ.get("LOCALAPPDATA")

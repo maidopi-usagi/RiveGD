@@ -3,7 +3,9 @@
 
 #include <godot_cpp/classes/node2d.hpp>
 #include <godot_cpp/classes/texture2drd.hpp>
+#include <godot_cpp/templates/local_vector.hpp>
 #include "../renderer/rive_render_registry.h"
+#include "rive_node.h"
 #include <rive/renderer.hpp>
 
 using namespace godot;
@@ -15,6 +17,12 @@ private:
     Ref<Texture2DRD> texture_rd;
     RID texture_rid;
     Vector2i size = Vector2i(512, 512);
+    Vector2i texture_size;
+    
+    LocalVector<RiveNode*> active_nodes;
+    double current_delta = 0.0;
+
+    void _advance_node(uint32_t p_index);
 
 protected:
     static void _bind_methods();
@@ -26,6 +34,8 @@ public:
 
     void set_size(const Vector2i &p_size);
     Vector2i get_size() const;
+    
+    Ref<Texture2D> get_texture() const;
 
     void draw(rive::Renderer *renderer) override;
     

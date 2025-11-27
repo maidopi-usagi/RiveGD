@@ -15,6 +15,7 @@ protected:
 public:
     virtual void draw(rive::Renderer* renderer) {}
     virtual void advance(double delta) {}
+    virtual Rect2 get_rive_bounds() const { return Rect2(); }
     virtual void pointer_down(Vector2 position) {}
     virtual void pointer_up(Vector2 position) {}
     virtual void pointer_move(Vector2 position) {}

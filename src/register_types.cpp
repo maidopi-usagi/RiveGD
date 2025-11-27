@@ -11,6 +11,7 @@
 #include "resources/rive_types.h"
 #include "scene/rive_node.h"
 #include "scene/rive_file_instance.h"
+#include "scene/rive_multi_instance.h"
 #include "scene/rive_control.h"
 #include "scene/rive_canvas_2d.h"
 #include "scene/rive_raw.h"
@@ -30,6 +31,7 @@ void initialize_rive_module(ModuleInitializationLevel p_level) {
         ClassDB::register_class<RiveFile>();
         ClassDB::register_class<RiveNode>();
         ClassDB::register_class<RiveFileInstance>();
+        ClassDB::register_class<RiveMultiInstance>();
         ClassDB::register_class<RiveRaw>();
         ClassDB::register_class<RiveCanvas2D>();
         
@@ -49,7 +51,7 @@ void initialize_rive() {
 
 void uninitialize_rive_module(ModuleInitializationLevel p_level) {
     if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
-        // Cleanup if needed
+        rive_integration::cleanup_rive_renderer();
     }
 }
 

@@ -11,9 +11,13 @@ config_version=5
 [application]
 
 config/name="Rive Extension"
-run/main_scene="uid://bxee2li5y334x"
+run/main_scene="uid://cd4thpux6x8wn"
 config/features=PackedStringArray("4.6", "Forward Plus")
 config/icon="res://icon.svg"
+
+[display]
+
+window/vsync/vsync_mode=0
 
 [dotnet]
 

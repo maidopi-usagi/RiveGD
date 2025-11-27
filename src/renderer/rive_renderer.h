@@ -9,6 +9,7 @@ using namespace godot;
 
 namespace rive_integration {
     void initialize_rive_renderer();
+    void cleanup_rive_renderer();
     void render_texture(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height);
 }
 

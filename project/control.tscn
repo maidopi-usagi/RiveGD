@@ -8,8 +8,8 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="RiveViewer" type="RiveViewer" parent="." unique_id=2086137001]
-file_path = "res://juice.riv"
+[node name="RiveControl" type="RiveControl" parent="." unique_id=715367300]
+file_path = "uid://b8qwhah7ebpgi"
 animation_name = "walk"
 layout_mode = 1
 anchors_preset = 15

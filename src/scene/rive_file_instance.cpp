@@ -148,6 +148,14 @@ void RiveFileInstance::draw(rive::Renderer *renderer) {
     renderer->restore();
 }
 
+Rect2 RiveFileInstance::get_rive_bounds() const {
+    if (artboard) {
+        rive::AABB aabb = artboard->bounds();
+        return Rect2(aabb.minX, aabb.minY, aabb.width(), aabb.height());
+    }
+    return Rect2();
+}
+
 bool RiveFileInstance::hit_test(Vector2 point) {
     return false; 
 }
