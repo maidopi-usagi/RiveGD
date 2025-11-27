@@ -2,9 +2,25 @@
 
 An **unofficial** Rive runtime with hardware accelerated GPU Renderer for Godot 4 as a GDExtension. Implemented Rive Renderer as rendering backend instead of CPU approaches with Skia. Artboards are directly rendered into an Texture.
 
+WIP!! PRs are welcomed.
+
 
 https://github.com/user-attachments/assets/615cefe9-f9ba-4821-b8d4-bf70510b7d0c
 
+
+## Features
+
+- **Hardware Accelerated Rendering**: Uses Rive's PLS (Pixel Local Storage) renderer for high performance.
+- **Multiple Backends**: Supports Vulkan, Metal, Direct3D 12, and OpenGL.
+- **Godot Integration**:
+    - `RiveControl`: A Control node for UI integration.
+    - `RiveFileInstance`: A Node2D for 2D scene integration.
+    - `RiveFile`: Resource loader for `.riv` files.
+- **SVG Support**: Experimental support for loading and rendering SVG files directly as Rive artboards.
+- **Interactivity**:
+    - Full State Machine support.
+    - Mouse/Pointer input forwarding.
+    - Editor inspector support for State Machine inputs (Number, Boolean, Trigger).
 
 ## Usage
 
@@ -12,9 +28,16 @@ This extension is still highly WIP.
 
 DO NOT USE IN PRODUCTION as APIs will change and stability is not tested well.
 
-So far there's only a basic RiveViewer Control Node implemented. Just create and load a file and use it as a regular ui panel.
+### Basic Usage
 
-More functionality in the Rive Runtime will be add later.
+1. **Import**: Drop your `.riv` or `.svg` files into the Godot project. They will be automatically imported as `RiveFile` resources.
+2. **UI**: Add a `RiveControl` node to your scene for UI elements.
+3. **2D Scene**: Add a `RiveFileInstance` node for 2D game objects.
+4. **Configuration**:
+   - Assign the `Rive File` property in the inspector.
+   - Select the desired **Artboard**.
+   - Choose an **Animation** or **State Machine** to play.
+   - (Optional) Configure State Machine inputs directly in the Inspector under the "Rive" group.
 
 ## Limitations
 
@@ -34,6 +57,7 @@ More functionality in the Rive Runtime will be add later.
 
 - [SCons](https://scons.org/)
 - [Python 3](https://www.python.org/)
+    - **Dependencies**: Install `ply` via pip: `pip install ply`
 - C++ Compiler (Clang, GCC, or MSVC)
 - **Vulkan SDK**: Ensure `VULKAN_SDK` environment variable is set.
 - **Windows (D3D12)**:
