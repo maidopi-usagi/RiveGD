@@ -69,9 +69,17 @@ void RiveEditorPlugin::_bind_methods() {}
 void RiveEditorPlugin::_enter_tree() {
     import_plugin.instantiate();
     add_import_plugin(import_plugin);
+    
+    inspector_plugin.instantiate();
+    add_inspector_plugin(inspector_plugin);
 }
 
 void RiveEditorPlugin::_exit_tree() {
     remove_import_plugin(import_plugin);
     import_plugin.unref();
+    
+    if (inspector_plugin.is_valid()) {
+        remove_inspector_plugin(inspector_plugin);
+        inspector_plugin.unref();
+    }
 }

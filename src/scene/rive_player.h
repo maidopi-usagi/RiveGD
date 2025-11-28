@@ -13,6 +13,7 @@
 #include <rive/animation/state_machine_instance.hpp>
 #include <rive/viewmodel/viewmodel_instance.hpp>
 #include <rive/renderer.hpp>
+#include "rive_view_model.h"
 
 using namespace godot;
 
@@ -25,12 +26,13 @@ private:
     std::unique_ptr<rive::LinearAnimationInstance> animation;
     std::unique_ptr<rive::StateMachineInstance> state_machine;
     rive::rcp<rive::ViewModelInstance> view_model_instance;
+    Ref<RiveViewModelInstance> wrapper_view_model_instance;
 
     String current_animation;
     String current_state_machine;
 
 protected:
-    static void _bind_methods() {}
+    static void _bind_methods();
 
 public:
     RivePlayer();
@@ -58,6 +60,8 @@ public:
 
     String get_animation_name() const { return current_animation; }
     String get_state_machine_name() const { return current_state_machine; }
+
+    Ref<RiveViewModelInstance> get_rive_view_model_instance();
 
     // ViewModel access
     rive::ViewModelInstance *get_view_model_instance() const { return view_model_instance.get(); }

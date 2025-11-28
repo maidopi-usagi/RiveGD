@@ -54,6 +54,8 @@ public:
     void pointer_down(Vector2 position) override;
     void pointer_up(Vector2 position) override;
     void pointer_move(Vector2 position) override;
+
+    Ref<RiveViewModelInstance> get_view_model_instance() const;
 };
 
 #endif

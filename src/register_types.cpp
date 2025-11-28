@@ -16,8 +16,10 @@
 #include "scene/rive_canvas_2d.h"
 #include "scene/rive_raw.h"
 #include "scene/rive_player.h"
+#include "scene/rive_view_model.h"
 #include "renderer/rive_texture_target.h"
 #include "editor/rive_editor_plugin.h"
+#include "editor/rive_view_model_inspector.h"
 #include <godot_cpp/classes/editor_plugin_registration.hpp>
 
 using namespace godot;
@@ -40,11 +42,22 @@ void initialize_rive_module(ModuleInitializationLevel p_level) {
         ClassDB::register_class<RivePlayer>();
         ClassDB::register_class<RiveTextureTarget>();
         
+        ClassDB::register_abstract_class<RiveViewModelProperty>();
+        ClassDB::register_class<RiveViewModelNumber>();
+        ClassDB::register_class<RiveViewModelString>();
+        ClassDB::register_class<RiveViewModelBoolean>();
+        ClassDB::register_class<RiveViewModelColor>();
+        ClassDB::register_class<RiveViewModelEnum>();
+        ClassDB::register_class<RiveViewModelTrigger>();
+        ClassDB::register_class<RiveViewModelInstance>();
+
         // Initialize renderer
     }
     
     if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
         ClassDB::register_class<RiveImportPlugin>();
+        ClassDB::register_class<RiveViewModelInspector>();
+        ClassDB::register_class<RiveInspectorPlugin>();
         ClassDB::register_class<RiveEditorPlugin>();
         EditorPlugins::add_by_type<RiveEditorPlugin>();
     }

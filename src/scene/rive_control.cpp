@@ -42,10 +42,15 @@ void RiveControl::_bind_methods()
     ClassDB::bind_method(D_METHOD("fire_trigger", "property_path"), &RiveControl::fire_trigger);
     ClassDB::bind_method(D_METHOD("set_enum_value", "property_path", "value"), &RiveControl::set_enum_value);
     ClassDB::bind_method(D_METHOD("set_color_value", "property_path", "value"), &RiveControl::set_color_value);
+    ClassDB::bind_method(D_METHOD("get_view_model_instance"), &RiveControl::get_view_model_instance);
+
+    ClassDB::bind_method(D_METHOD("set_property_values", "values"), &RiveControl::set_property_values);
+    ClassDB::bind_method(D_METHOD("get_property_values"), &RiveControl::get_property_values);
 
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "file_path", PROPERTY_HINT_FILE, RiveConstants::EXTENSION), "set_file_path", "get_file_path");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "animation_name"), "set_animation_name", "get_animation_name");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "state_machine_name"), "set_state_machine_name", "get_state_machine_name");
+    ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "property_values", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_STORAGE), "set_property_values", "get_property_values");
 }
 
 RiveControl::RiveControl()
@@ -147,12 +152,37 @@ void RiveControl::load_file()
 
     if (rive_player.is_valid()) {
         if (rive_player->load_from_bytes(data)) {
-            _update_property_list();
+            _apply_property_values();
             notify_property_list_changed();
             UtilityFunctions::print_verbose("Rive file loaded successfully: " + file_path);
         } else {
             ERR_PRINT("Failed to import Rive file: " + file_path);
         }
+    }
+}
+
+void RiveControl::set_property_values(const Dictionary &p_values) {
+    property_values = p_values;
+    _apply_property_values();
+}
+
+Dictionary RiveControl::get_property_values() const {
+    return property_values;
+}
+
+void RiveControl::_apply_property_values() {
+    if (!rive_player.is_valid()) return;
+    
+    Array keys = property_values.keys();
+    for (int i = 0; i < keys.size(); i++) {
+        String path = keys[i];
+        Variant value = property_values[path];
+        
+        if (value.get_type() == Variant::FLOAT) set_number_value(path, value);
+        else if (value.get_type() == Variant::STRING) set_text_value(path, value);
+        else if (value.get_type() == Variant::BOOL) set_boolean_value(path, value);
+        else if (value.get_type() == Variant::INT) set_enum_value(path, value);
+        else if (value.get_type() == Variant::COLOR) set_color_value(path, value);
     }
 }
 
@@ -412,103 +442,9 @@ void RiveControl::fire_trigger(const String &p_property_path)
     }
 }
 
-void RiveControl::_collect_view_model_properties(rive::ViewModelInstance *vm, String prefix)
-{
-    if (!vm)
-        return;
-
-    std::vector<rive::ViewModelInstanceValue *> props = vm->propertyValues();
-
-    for (size_t i = 0; i < props.size(); ++i)
-    {
-        rive::ViewModelInstanceValue *value = props[i];
-        if (!value)
-            continue;
-
-        String name = value->name().c_str();
-        String path = prefix.is_empty() ? name : prefix + "." + name;
-
-        if (value->is<rive::ViewModelInstanceNumber>())
-        {
-            rive_properties.push_back({path, Variant::FLOAT});
-        }
-        else if (value->is<rive::ViewModelInstanceString>())
-        {
-            rive_properties.push_back({path, Variant::STRING});
-        }
-        else if (value->is<rive::ViewModelInstanceBoolean>())
-        {
-            rive_properties.push_back({path, Variant::BOOL});
-        }
-        else if (value->is<rive::ViewModelInstanceTrigger>())
-        {
-            rive_properties.push_back({path, Variant::BOOL, true});
-        }
-        else if (value->is<rive::ViewModelInstanceColor>())
-        {
-            rive_properties.push_back({path, Variant::COLOR});
-        }
-        else if (rive::ViewModelInstanceViewModel *child_vm_prop = value->as<rive::ViewModelInstanceViewModel>())
-        {
-            rive::rcp<rive::ViewModelInstance> child_vm = child_vm_prop->referenceViewModelInstance();
-            if (child_vm)
-            {
-                _collect_view_model_properties(child_vm.get(), path);
-            }
-        }
-        else if (rive::ViewModelInstanceEnum *enum_val = value->as<rive::ViewModelInstanceEnum>())
-        {
-            String hint;
-            rive::ViewModelProperty *prop_base = enum_val->viewModelProperty();
-            if (prop_base && prop_base->is<rive::ViewModelPropertyEnum>())
-            {
-                rive::ViewModelPropertyEnum *vm_prop = prop_base->as<rive::ViewModelPropertyEnum>();
-                if (vm_prop)
-                {
-                    rive::DataEnum *data_enum = vm_prop->dataEnum();
-                    if (data_enum)
-                    {
-                        std::vector<rive::DataEnumValue *> values = data_enum->values();
-                        for (size_t i = 0; i < values.size(); ++i)
-                        {
-                            if (values[i])
-                            {
-                                if (i > 0)
-                                    hint += ",";
-                                hint += values[i]->key().c_str();
-                            }
-                        }
-                    }
-                }
-            }
-            rive_properties.push_back({path, Variant::INT, false, hint});
-        }
-    }
-}
-
-void RiveControl::_update_property_list()
-{
-    rive_properties.clear();
-    if (rive_player.is_valid())
-    {
-        _collect_view_model_properties(rive_player->get_view_model_instance(), "");
-    }
-    notify_property_list_changed();
-}
-
 void RiveControl::_get_property_list(List<PropertyInfo> *p_list) const
 {
-    for (const RiveProperty &prop : rive_properties)
-    {
-        if (!prop.enum_hint.is_empty())
-        {
-            p_list->push_back(PropertyInfo(prop.type, RiveConstants::PROPERTY_PREFIX + prop.path, PROPERTY_HINT_ENUM, prop.enum_hint));
-        }
-        else
-        {
-            p_list->push_back(PropertyInfo(prop.type, RiveConstants::PROPERTY_PREFIX + prop.path));
-        }
-    }
+    // Dynamic properties are now handled by RiveInspectorPlugin
 }
 
 bool RiveControl::_get(const StringName &p_name, Variant &r_ret) const
@@ -517,6 +453,12 @@ bool RiveControl::_get(const StringName &p_name, Variant &r_ret) const
     if (name.begins_with(RiveConstants::PROPERTY_PREFIX))
     {
         String path = name.substr(String(RiveConstants::PROPERTY_PREFIX).length());
+        
+        // Check overrides first
+        if (property_values.has(path)) {
+            r_ret = property_values[path];
+            return true;
+        }
 
         if (!rive_player.is_valid()) return false;
         rive::ViewModelInstance *vm = rive_player->get_view_model_instance();
@@ -577,46 +519,18 @@ bool RiveControl::_set(const StringName &p_name, const Variant &p_value)
     if (name.begins_with(RiveConstants::PROPERTY_PREFIX))
     {
         String path = name.substr(String(RiveConstants::PROPERTY_PREFIX).length());
-
-        for (const RiveProperty &prop : rive_properties)
-        {
-            if (prop.path == path)
-            {
-                if (prop.is_trigger)
-                {
-                    if (p_value)
-                    {
-                        const_cast<RiveControl *>(this)->fire_trigger(path);
-                    }
-                    return true;
-                }
-                if (prop.type == Variant::FLOAT)
-                {
-                    const_cast<RiveControl *>(this)->set_number_value(path, p_value);
-                    return true;
-                }
-                if (prop.type == Variant::STRING)
-                {
-                    const_cast<RiveControl *>(this)->set_text_value(path, p_value);
-                    return true;
-                }
-                if (prop.type == Variant::BOOL)
-                {
-                    const_cast<RiveControl *>(this)->set_boolean_value(path, p_value);
-                    return true;
-                }
-                if (prop.type == Variant::INT)
-                {
-                    const_cast<RiveControl *>(this)->set_enum_value(path, p_value);
-                    return true;
-                }
-                if (prop.type == Variant::COLOR)
-                {
-                    const_cast<RiveControl *>(this)->set_color_value(path, p_value);
-                    return true;
-                }
-            }
-        }
+        
+        // Store in dictionary for persistence
+        property_values[path] = p_value;
+        
+        // Apply immediately
+        if (p_value.get_type() == Variant::FLOAT) set_number_value(path, p_value);
+        else if (p_value.get_type() == Variant::STRING) set_text_value(path, p_value);
+        else if (p_value.get_type() == Variant::BOOL) set_boolean_value(path, p_value);
+        else if (p_value.get_type() == Variant::INT) set_enum_value(path, p_value);
+        else if (p_value.get_type() == Variant::COLOR) set_color_value(path, p_value);
+        
+        return true;
     }
     return false;
 }
@@ -668,4 +582,11 @@ void RiveControl::set_color_value(const String &p_property_path, Color p_value)
             }
         }
     }
+}
+
+Ref<RiveViewModelInstance> RiveControl::get_view_model_instance() const {
+    if (rive_player.is_valid()) {
+        return rive_player->get_rive_view_model_instance();
+    }
+    return nullptr;
 }

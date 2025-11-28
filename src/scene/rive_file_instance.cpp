@@ -17,6 +17,7 @@ void RiveFileInstance::_bind_methods() {
     
     ClassDB::bind_method(D_METHOD("set_auto_play", "auto_play"), &RiveFileInstance::set_auto_play);
     ClassDB::bind_method(D_METHOD("get_auto_play"), &RiveFileInstance::get_auto_play);
+    ClassDB::bind_method(D_METHOD("get_view_model_instance"), &RiveFileInstance::get_view_model_instance);
 
     ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "rive_file", PROPERTY_HINT_RESOURCE_TYPE, "RiveFile"), "set_rive_file", "get_rive_file");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "artboard_name"), "set_artboard_name", "get_artboard_name");
@@ -186,4 +187,11 @@ void RiveFileInstance::pointer_move(Vector2 position) {
         );
         rive_player->pointer_move(position, rive_transform);
     }
+}
+
+Ref<RiveViewModelInstance> RiveFileInstance::get_view_model_instance() const {
+    if (rive_player.is_valid()) {
+        return rive_player->get_rive_view_model_instance();
+    }
+    return nullptr;
 }

@@ -1,6 +1,11 @@
 #include "rive_player.h"
 #include "../renderer/rive_render_registry.h"
 #include <godot_cpp/variant/utility_functions.hpp>
+#include <godot_cpp/core/class_db.hpp>
+
+void RivePlayer::_bind_methods() {
+    ClassDB::bind_method(D_METHOD("get_rive_view_model_instance"), &RivePlayer::get_rive_view_model_instance);
+}
 
 RivePlayer::RivePlayer() {
 }
@@ -37,6 +42,7 @@ void RivePlayer::set_artboard(std::unique_ptr<rive::ArtboardInstance> p_artboard
     state_machine.reset();
     animation.reset();
     view_model_instance = nullptr;
+    wrapper_view_model_instance.unref();
     artboard = std::move(p_artboard);
     rive_file = p_file;
 
@@ -198,3 +204,12 @@ PackedStringArray RivePlayer::get_state_machine_list() const {
     }
     return list;
 }
+
+Ref<RiveViewModelInstance> RivePlayer::get_rive_view_model_instance() {
+    if (wrapper_view_model_instance.is_null() && view_model_instance) {
+        wrapper_view_model_instance.instantiate();
+        wrapper_view_model_instance->_init(view_model_instance);
+    }
+    return wrapper_view_model_instance;
+}
+
