@@ -7,11 +7,15 @@ WIP!! PRs are welcomed.
 
 https://github.com/user-attachments/assets/615cefe9-f9ba-4821-b8d4-bf70510b7d0c
 
+| <img src="https://github.com/user-attachments/assets/4d2b2bf4-3e52-47c8-8e48-cb562d0cb637" width="100%" /> | <img src="https://github.com/user-attachments/assets/3e05f52d-6b5c-4b64-aa8d-ee32bb1d1284" width="100%" /> | <img src="https://github.com/user-attachments/assets/60ab0db4-9f11-4778-8f70-89e278516135" width="100%" /> |
+| :---: | :---: | :---: |
+| Texture Sharing | DataBinding | Custom Vector Rendering |
+
 
 ## Features
 
-- **Hardware Accelerated Rendering**: Uses Rive's PLS (Pixel Local Storage) renderer for high performance.
-- **Multiple Backends**: Supports Vulkan, Metal, Direct3D 12, and OpenGL.
+- **Hardware Accelerated Rendering**
+- **Multiple Backends**: Supports Vulkan, Metal, Direct3D 12, and OpenGL(partially).
 - **Godot Integration**:
     - `RiveControl`: A Control node for UI integration.
     - `RiveFileInstance`: A Node2D for 2D scene integration.
@@ -38,7 +42,7 @@ DO NOT USE IN PRODUCTION as APIs will change and stability is not tested well.
 
 1. **Import**: Drop your `.riv` or `.svg` files into the Godot project. They will be automatically imported as `RiveFile` resources.
 2. **UI**: Add a `RiveControl` node to your scene for UI elements.
-3. **2D Scene**: Add a `RiveFileInstance` node for 2D game objects.
+3. **2D Scene**: Add a `RiveFileInstance` or `RiveMultiInstance` node under `RiveCanvas2D` for 2D game objects.
 4. **Configuration**:
    - Assign the `Rive File` property in the inspector.
    - Select the desired **Artboard**.
