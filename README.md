@@ -15,12 +15,18 @@ https://github.com/user-attachments/assets/615cefe9-f9ba-4821-b8d4-bf70510b7d0c
 - **Godot Integration**:
     - `RiveControl`: A Control node for UI integration.
     - `RiveFileInstance`: A Node2D for 2D scene integration.
-    - `RiveFile`: Resource loader for `.riv` files.
-- **SVG Support**: Experimental support for loading and rendering SVG files directly as Rive artboards.
+    - `RiveFile`: Resource-based workflow for `.riv` files. Supports **hot-reloading** when files are updated externally.
+- **Rive Features Support**:
+    - **State Machines**: Full support for State Machines, Inputs (Number, Boolean, Trigger), and Listeners.
+    - **ViewModels**: Support for Rive ViewModels including Text, Number, Boolean, Enum, Color, and Triggers.
+      - **Textures Sharing**: Pass Godot's Texture resources effciently to Rive(via `ViewModelImageProperty`)
+    - **Data Binding**: Update Rive properties dynamically from Godot via GDScript or the Inspector.
 - **Interactivity**:
-    - Full State Machine support.
-    - Mouse/Pointer input forwarding.
-    - Editor inspector support for State Machine inputs (Number, Boolean, Trigger).
+    - Mouse/Pointer input forwarding (Hover, Click, Move).
+    - `RiveControl` supports hit-test so input events can handle with Godot's builtin Controls.
+- **Editor Integration**:
+    - Custom Inspector for selecting Artboards, Animations, and State Machines.
+    - Dynamic property list generation for State Machine inputs and ViewModel properties.
 
 ## Usage
 
@@ -46,6 +52,17 @@ DO NOT USE IN PRODUCTION as APIs will change and stability is not tested well.
    - MacOS doesn't support native GLES fallback so cannot work on MacOS right now. I'll looking into this when I have time, maybe fallback to ANGLE when ANGLE backend got fixed.
    - ANGLE Backend: Godot official builds links ANGLE statically. I can only make it work using dynamic-linked libEGL and libGLESv2.
 - **MoltenVK:** Seems that MoltenVK is missing some features, rendered texture is blotchy. Please use Metal on MacOS.
+
+## Todo
+
+- [ ] **Platform Support**: Test and fix builds for Linux, Android, and iOS.
+- [ ] **Rendering**: Add more vector drawing commands.
+- [ ] **Integration**: Implement `RiveRenderTargetTexture` for rendering Rive content to a Godot Texture resource.
+- [ ] **Events**: Add support for Rive Events (Note: Rive recommends using DataBinding/ViewModels for most interactions).
+- [ ] **Documentation**: Add docs when APIs becomes stable, and add several demos.
+- [ ] **Scripting**: Enable Luau scripting support within Rive.
+- [ ] **Text**: Add support for using Godot fonts in Rive.
+- [ ] **Audio**: Add audio support (TBD).
 
 ## Building from Source
 
