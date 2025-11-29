@@ -199,7 +199,8 @@ void RiveViewModelInspector::_update_ui() {
             editor->connect("color_changed", Callable(this, "_on_color_changed").bind(path));
             row->add_child(editor);
         }
-        else if (rive::ViewModelInstanceEnum *enum_val = value->as<rive::ViewModelInstanceEnum>()) {
+        else if (value->is<rive::ViewModelInstanceEnum>()) {
+            rive::ViewModelInstanceEnum *enum_val = value->as<rive::ViewModelInstanceEnum>();
             OptionButton *editor = memnew(OptionButton);
             editor->set_h_size_flags(Control::SIZE_EXPAND_FILL);
             

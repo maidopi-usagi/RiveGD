@@ -23,8 +23,9 @@ using namespace godot;
 
 void RiveControl::_bind_methods()
 {
-    ClassDB::bind_method(D_METHOD("set_file_path", "path"), &RiveControl::set_file_path);
-    ClassDB::bind_method(D_METHOD("get_file_path"), &RiveControl::get_file_path);
+    ClassDB::bind_method(D_METHOD("set_rive_file", "file"), &RiveControl::set_rive_file);
+    ClassDB::bind_method(D_METHOD("get_rive_file"), &RiveControl::get_rive_file);
+    ClassDB::bind_method(D_METHOD("_on_rive_file_changed"), &RiveControl::_on_rive_file_changed);
 
     ClassDB::bind_method(D_METHOD("play_animation", "name"), &RiveControl::play_animation);
     ClassDB::bind_method(D_METHOD("play_state_machine", "name"), &RiveControl::play_state_machine);
@@ -47,7 +48,7 @@ void RiveControl::_bind_methods()
     ClassDB::bind_method(D_METHOD("set_property_values", "values"), &RiveControl::set_property_values);
     ClassDB::bind_method(D_METHOD("get_property_values"), &RiveControl::get_property_values);
 
-    ADD_PROPERTY(PropertyInfo(Variant::STRING, "file_path", PROPERTY_HINT_FILE, RiveConstants::EXTENSION), "set_file_path", "get_file_path");
+    ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "rive_file", PROPERTY_HINT_RESOURCE_TYPE, "RiveFile"), "set_rive_file", "get_rive_file");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "animation_name"), "set_animation_name", "get_animation_name");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "state_machine_name"), "set_state_machine_name", "get_state_machine_name");
     ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "property_values", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_STORAGE), "set_property_values", "get_property_values");
@@ -121,42 +122,51 @@ void RiveControl::_render_rive()
     rive_integration::render_texture(rd, texture_target->get_texture_rid(), this, size.width, size.height);
 }
 
-void RiveControl::set_file_path(const String &p_path)
+void RiveControl::set_rive_file(const Ref<RiveFile> &p_file)
 {
-    file_path = p_path;
+    if (rive_file == p_file)
+        return;
+
+    if (rive_file.is_valid()) {
+        rive_file->disconnect("changed", Callable(this, "_on_rive_file_changed"));
+    }
+
+    rive_file = p_file;
+
+    if (rive_file.is_valid()) {
+        rive_file->connect("changed", Callable(this, "_on_rive_file_changed"));
+    }
+
     if (is_inside_tree())
     {
         load_file();
     }
 }
 
-String RiveControl::get_file_path() const
+Ref<RiveFile> RiveControl::get_rive_file() const
 {
-    return file_path;
+    return rive_file;
+}
+
+void RiveControl::_on_rive_file_changed() {
+    load_file();
+    queue_redraw();
 }
 
 void RiveControl::load_file()
 {
-    if (file_path.is_empty())
+    if (rive_file.is_null())
         return;
 
-    Ref<FileAccess> f = FileAccess::open(file_path, FileAccess::READ);
-    if (f.is_null())
-    {
-        ERR_PRINT("Failed to open Rive file: " + file_path);
-        return;
-    }
-
-    uint64_t len = f->get_length();
-    PackedByteArray data = f->get_buffer(len);
+    PackedByteArray data = rive_file->get_data();
 
     if (rive_player.is_valid()) {
         if (rive_player->load_from_bytes(data)) {
             _apply_property_values();
             notify_property_list_changed();
-            UtilityFunctions::print_verbose("Rive file loaded successfully: " + file_path);
+            UtilityFunctions::print_verbose("Rive file loaded successfully.");
         } else {
-            ERR_PRINT("Failed to import Rive file: " + file_path);
+            ERR_PRINT("Failed to import Rive file.");
         }
     }
 }
@@ -368,9 +378,9 @@ void RiveControl::set_text_value(const String &p_property_path, const String &p_
         rive::ViewModelInstanceValue *prop = target_vm->propertyValue(prop_name.utf8().get_data());
         if (prop)
         {
-            if (rive::ViewModelInstanceString *str_prop = prop->as<rive::ViewModelInstanceString>())
+            if (prop->is<rive::ViewModelInstanceString>())
             {
-                str_prop->propertyValue(std::string(p_value.utf8().get_data()));
+                prop->as<rive::ViewModelInstanceString>()->propertyValue(std::string(p_value.utf8().get_data()));
             }
         }
     }
@@ -390,9 +400,9 @@ void RiveControl::set_number_value(const String &p_property_path, float p_value)
         rive::ViewModelInstanceValue *prop = target_vm->propertyValue(prop_name.utf8().get_data());
         if (prop)
         {
-            if (rive::ViewModelInstanceNumber *num_prop = prop->as<rive::ViewModelInstanceNumber>())
+            if (prop->is<rive::ViewModelInstanceNumber>())
             {
-                num_prop->propertyValue(p_value);
+                prop->as<rive::ViewModelInstanceNumber>()->propertyValue(p_value);
             }
         }
     }
@@ -412,9 +422,9 @@ void RiveControl::set_boolean_value(const String &p_property_path, bool p_value)
         rive::ViewModelInstanceValue *prop = target_vm->propertyValue(prop_name.utf8().get_data());
         if (prop)
         {
-            if (rive::ViewModelInstanceBoolean *bool_prop = prop->as<rive::ViewModelInstanceBoolean>())
+            if (prop->is<rive::ViewModelInstanceBoolean>())
             {
-                bool_prop->propertyValue(p_value);
+                prop->as<rive::ViewModelInstanceBoolean>()->propertyValue(p_value);
             }
         }
     }
@@ -434,9 +444,9 @@ void RiveControl::fire_trigger(const String &p_property_path)
         rive::ViewModelInstanceValue *prop = target_vm->propertyValue(prop_name.utf8().get_data());
         if (prop)
         {
-            if (rive::ViewModelInstanceTrigger *trigger_prop = prop->as<rive::ViewModelInstanceTrigger>())
+            if (prop->is<rive::ViewModelInstanceTrigger>())
             {
-                trigger_prop->trigger();
+                prop->as<rive::ViewModelInstanceTrigger>()->trigger();
             }
         }
     }
@@ -472,19 +482,19 @@ bool RiveControl::_get(const StringName &p_name, Variant &r_ret) const
             rive::ViewModelInstanceValue *prop = target_vm->propertyValue(prop_name.utf8().get_data());
             if (prop)
             {
-                if (rive::ViewModelInstanceNumber *num = prop->as<rive::ViewModelInstanceNumber>())
+                if (prop->is<rive::ViewModelInstanceNumber>())
                 {
-                    r_ret = num->propertyValue();
+                    r_ret = prop->as<rive::ViewModelInstanceNumber>()->propertyValue();
                     return true;
                 }
-                if (rive::ViewModelInstanceString *str = prop->as<rive::ViewModelInstanceString>())
+                if (prop->is<rive::ViewModelInstanceString>())
                 {
-                    r_ret = String(str->propertyValue().c_str());
+                    r_ret = String(prop->as<rive::ViewModelInstanceString>()->propertyValue().c_str());
                     return true;
                 }
-                if (rive::ViewModelInstanceBoolean *b = prop->as<rive::ViewModelInstanceBoolean>())
+                if (prop->is<rive::ViewModelInstanceBoolean>())
                 {
-                    r_ret = b->propertyValue();
+                    r_ret = prop->as<rive::ViewModelInstanceBoolean>()->propertyValue();
                     return true;
                 }
                 if (prop->is<rive::ViewModelInstanceTrigger>())
@@ -492,14 +502,14 @@ bool RiveControl::_get(const StringName &p_name, Variant &r_ret) const
                     r_ret = false;
                     return true;
                 }
-                if (rive::ViewModelInstanceEnum *enm = prop->as<rive::ViewModelInstanceEnum>())
+                if (prop->is<rive::ViewModelInstanceEnum>())
                 {
-                    r_ret = (int)enm->propertyValue();
+                    r_ret = (int)prop->as<rive::ViewModelInstanceEnum>()->propertyValue();
                     return true;
                 }
-                if (rive::ViewModelInstanceColor *col = prop->as<rive::ViewModelInstanceColor>())
+                if (prop->is<rive::ViewModelInstanceColor>())
                 {
-                    uint32_t argb = col->propertyValue();
+                    uint32_t argb = prop->as<rive::ViewModelInstanceColor>()->propertyValue();
                     float a = ((argb >> 24) & 0xFF) / 255.0f;
                     float r = ((argb >> 16) & 0xFF) / 255.0f;
                     float g = ((argb >> 8) & 0xFF) / 255.0f;
@@ -549,9 +559,9 @@ void RiveControl::set_enum_value(const String &p_property_path, int p_value)
         rive::ViewModelInstanceValue *prop = target_vm->propertyValue(prop_name.utf8().get_data());
         if (prop)
         {
-            if (rive::ViewModelInstanceEnum *enum_prop = prop->as<rive::ViewModelInstanceEnum>())
+            if (prop->is<rive::ViewModelInstanceEnum>())
             {
-                enum_prop->value((uint32_t)p_value);
+                prop->as<rive::ViewModelInstanceEnum>()->value((uint32_t)p_value);
             }
         }
     }
@@ -571,14 +581,14 @@ void RiveControl::set_color_value(const String &p_property_path, Color p_value)
         rive::ViewModelInstanceValue *prop = target_vm->propertyValue(prop_name.utf8().get_data());
         if (prop)
         {
-            if (rive::ViewModelInstanceColor *color_prop = prop->as<rive::ViewModelInstanceColor>())
+            if (prop->is<rive::ViewModelInstanceColor>())
             {
                 uint32_t a = (uint32_t)(p_value.a * 255.0f);
                 uint32_t r = (uint32_t)(p_value.r * 255.0f);
                 uint32_t g = (uint32_t)(p_value.g * 255.0f);
                 uint32_t b = (uint32_t)(p_value.b * 255.0f);
                 uint32_t argb = (a << 24) | (r << 16) | (g << 8) | b;
-                color_prop->propertyValue(argb);
+                prop->as<rive::ViewModelInstanceColor>()->propertyValue(argb);
             }
         }
     }

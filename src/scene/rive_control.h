@@ -12,6 +12,7 @@
 #include "renderer/rive_render_registry.h"
 #include "rive_player.h"
 #include "../renderer/rive_texture_target.h"
+#include "../resources/rive_file.h"
 
 using namespace godot;
 
@@ -19,7 +20,7 @@ class RiveControl : public Control, public RiveDrawable
 {
     GDCLASS(RiveControl, Control);
 
-    String file_path;
+    Ref<RiveFile> rive_file;
     Ref<RivePlayer> rive_player;
     Ref<RiveTextureTarget> texture_target;
     Dictionary property_values;
@@ -48,13 +49,14 @@ protected:
     void _render_rive();
     rive::Mat2D _get_rive_transform() const;
     void _apply_property_values();
+    void _on_rive_file_changed();
 
 public:
     RiveControl();
     ~RiveControl();
 
-    void set_file_path(const String &p_path);
-    String get_file_path() const;
+    void set_rive_file(const Ref<RiveFile> &p_file);
+    Ref<RiveFile> get_rive_file() const;
 
     void set_property_values(const Dictionary &p_values);
     Dictionary get_property_values() const;

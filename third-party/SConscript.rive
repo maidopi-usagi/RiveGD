@@ -220,6 +220,7 @@ else:
 
 # Platform specific flags
 if rive_env["platform"] == "macos":
+    rive_env.Append(CCFLAGS=["-fobjc-arc"])
     rive_env.Append(FRAMEWORKS=["Metal", "Foundation", "QuartzCore", "AppKit", "CoreGraphics", "CoreText", "AudioToolbox"])
     rive_env.Append(CPPDEFINES=["RIVE_METAL"])
 elif rive_env["platform"] in ["windows", "linuxbsd", "android"]:

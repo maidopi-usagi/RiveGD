@@ -21,7 +21,8 @@ rive::rcp<rive::RenderImage> RiveTextureFactoryMetal_make_image(Ref<Texture2D> t
     RID texture_rid = RenderingServer::get_singleton()->texture_get_rd_texture(texture->get_rid());
     if (!texture_rid.is_valid()) return nullptr;
 
-    id<MTLTexture> mtl_texture = (id<MTLTexture>)rd->get_driver_resource(RenderingDevice::DRIVER_RESOURCE_TEXTURE, texture_rid, 0);
+    void* texture_ptr = (void*)rd->get_driver_resource(RenderingDevice::DRIVER_RESOURCE_TEXTURE, texture_rid, 0);
+    id<MTLTexture> mtl_texture = (__bridge id<MTLTexture>)texture_ptr;
     if (!mtl_texture) return nullptr;
 
     auto factory = RiveRenderRegistry::get_singleton()->get_factory();
