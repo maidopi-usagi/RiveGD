@@ -2,6 +2,7 @@
 #define RIVE_VIEW_MODEL_H
 
 #include <godot_cpp/classes/ref_counted.hpp>
+#include <godot_cpp/classes/texture2d.hpp>
 #include <godot_cpp/variant/color.hpp>
 #include <godot_cpp/variant/string.hpp>
 #include <godot_cpp/templates/hash_map.hpp>
@@ -16,6 +17,7 @@ namespace rive {
     class ViewModelInstanceColor;
     class ViewModelInstanceEnum;
     class ViewModelInstanceTrigger;
+    class ViewModelInstanceAssetImage;
 }
 
 using namespace godot;
@@ -133,6 +135,21 @@ public:
     String get_property_name() const override;
 };
 
+class RiveViewModelImage : public RiveViewModelProperty {
+    GDCLASS(RiveViewModelImage, RiveViewModelProperty);
+
+private:
+    rive::ViewModelInstanceAssetImage* instance_image = nullptr;
+
+protected:
+    static void _bind_methods();
+
+public:
+    void _init(rive::rcp<rive::ViewModelInstance> p_owner, rive::ViewModelInstanceAssetImage* p_image);
+    void set_value(const Ref<Texture2D>& p_texture);
+    String get_property_name() const override;
+};
+
 class RiveViewModelInstance : public RefCounted {
     GDCLASS(RiveViewModelInstance, RefCounted);
 
@@ -153,6 +170,7 @@ public:
     Ref<RiveViewModelColor> get_color_property(const String& p_path);
     Ref<RiveViewModelEnum> get_enum_property(const String& p_path);
     Ref<RiveViewModelTrigger> get_trigger_property(const String& p_path);
+    Ref<RiveViewModelImage> get_image_property(const String& p_path);
 
     bool _set(const StringName &p_name, const Variant &p_value);
     bool _get(const StringName &p_name, Variant &r_ret) const;

@@ -49,6 +49,7 @@ void initialize_rive_module(ModuleInitializationLevel p_level) {
         ClassDB::register_class<RiveViewModelColor>();
         ClassDB::register_class<RiveViewModelEnum>();
         ClassDB::register_class<RiveViewModelTrigger>();
+        ClassDB::register_class<RiveViewModelImage>();
         ClassDB::register_class<RiveViewModelInstance>();
 
         // Initialize renderer

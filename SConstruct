@@ -6,6 +6,38 @@ from pathlib import Path
 # TODO: Do not copy environment after godot-cpp/test is updated <https://github.com/godotengine/godot-cpp/blob/master/test/SConstruct>.
 env = SConscript("third-party/godot-cpp/SConstruct")
 
+# Apply patches
+import subprocess
+
+def apply_patch(patch_path, target_dir, patch_name):
+    print(f"Checking for {patch_name} patch...")
+    patch_file = os.path.abspath(patch_path)
+    target_dir = os.path.abspath(target_dir)
+    
+    if os.path.exists(patch_file) and os.path.exists(target_dir):
+        try:
+            # Check if patch is already applied (reverse check succeeds if applied)
+            subprocess.check_call(["git", "apply", "--check", "--reverse", patch_file], cwd=target_dir, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+            print(f"{patch_name} patch already applied.")
+        except subprocess.CalledProcessError:
+            # Not applied (or conflicts), try to apply
+            print(f"Applying {patch_name} patch...")
+            try:
+                subprocess.check_call(["git", "apply", patch_file], cwd=target_dir)
+                print(f"{patch_name} patch applied successfully.")
+            except subprocess.CalledProcessError as e:
+                print(f"Warning: Failed to apply {patch_name} patch: {e}")
+                print(f"Build may fail if {patch_name} support is missing.")
+
+rive_runtime_dir = "third-party/rive-runtime"
+
+if env["platform"] == "macos":
+    apply_patch("src/patches/metal_texture_support.patch", rive_runtime_dir, "Metal texture support")
+
+# Apply OpenGL patch for all platforms (or specifically non-macOS if desired, but harmless if applied)
+# This patch fixes OpenGL compatibility issues (SSBOs, GLES version)
+apply_patch("src/patches/opengl_texture_support.patch", rive_runtime_dir, "OpenGL texture support")
+
 # Build Rive Runtime
 # We pass the godot-cpp environment so it inherits platform flags/compilers
 rive_lib, rive_env = SConscript("third-party/SConscript.rive", exports="env")
@@ -29,22 +61,25 @@ if extension_env["platform"] == "macos":
     sources += Glob("src/renderer/*.mm")
 
 # On macOS exclude D3D12 renderer source(s) that live in the project `src/` directory.
-if extension_env["platform"] == "macos":
-    def _basename(node):
-        try:
-            return os.path.basename(str(node))
-        except Exception:
-            return str(node)
+# Also exclude render_context_gl_impl.cpp and render_buffer_gl_impl.cpp from src/patches/ as they are now applied as patches to rive-runtime
+def _basename(node):
+    try:
+        return os.path.basename(str(node))
+    except Exception:
+        return str(node)
 
-    d3d_excludes = {"rive_renderer_d3d12.cpp", "rive_renderer_d3d12.mm", "rive_renderer_d3d12.c"}
-    filtered_sources = []
-    for s in sources:
-        name = _basename(s)
-        if name in d3d_excludes:
-            print(f"RIVE: Excluding {name} on macOS")
-            continue
-        filtered_sources.append(s)
-    sources = filtered_sources
+excludes = {"render_context_gl_impl.cpp", "render_buffer_gl_impl.cpp"}
+if extension_env["platform"] == "macos":
+    excludes.update({"rive_renderer_d3d12.cpp", "rive_renderer_d3d12.mm", "rive_renderer_d3d12.c"})
+
+filtered_sources = []
+for s in sources:
+    name = _basename(s)
+    if name in excludes:
+        print(f"RIVE: Excluding {name}")
+        continue
+    filtered_sources.append(s)
+sources = filtered_sources
 
 # Include paths for RiveGD sources
 # (Most are already in extension_env from rive-runtime SConscript, but we need src/)

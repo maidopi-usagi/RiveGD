@@ -1,6 +1,9 @@
 #include "rive_view_model.h"
+#include "../renderer/rive_render_registry.h"
+#include "../renderer/rive_texture_factory.h"
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#include <godot_cpp/classes/image.hpp>
 
 #include <rive/viewmodel/viewmodel_instance.hpp>
 #include <rive/viewmodel/viewmodel_instance_number.hpp>
@@ -10,9 +13,11 @@
 #include <rive/viewmodel/viewmodel_instance_enum.hpp>
 #include <rive/viewmodel/viewmodel_instance_trigger.hpp>
 #include <rive/viewmodel/viewmodel_instance_viewmodel.hpp>
+#include <rive/viewmodel/viewmodel_instance_asset_image.hpp>
 #include <rive/viewmodel/viewmodel_property_enum.hpp>
 #include <rive/viewmodel/data_enum.hpp>
 #include <rive/viewmodel/data_enum_value.hpp>
+#include <rive/factory.hpp>
 
 using namespace godot;
 
@@ -318,6 +323,40 @@ String RiveViewModelTrigger::get_property_name() const {
     return "";
 }
 
+// --- RiveViewModelImage ---
+
+void RiveViewModelImage::_bind_methods() {
+    ClassDB::bind_method(D_METHOD("set_value", "texture"), &RiveViewModelImage::set_value);
+    // No get_value for now as it's hard to reconstruct Texture2D from RenderImage
+}
+
+void RiveViewModelImage::_init(rive::rcp<rive::ViewModelInstance> p_owner, rive::ViewModelInstanceAssetImage* p_image) {
+    instance_ref = p_owner;
+    instance_image = p_image;
+}
+
+void RiveViewModelImage::set_value(const Ref<Texture2D>& p_texture) {
+    if (!instance_image) return;
+    
+    if (p_texture.is_null()) {
+        // TODO: Set null image?
+        return;
+    }
+
+    rive::rcp<rive::RenderImage> render_image = rive_integration::RiveTextureFactory::make_image(p_texture);
+    
+    if (render_image) {
+        instance_image->value(render_image.get());
+    }
+}
+
+String RiveViewModelImage::get_property_name() const {
+    if (instance_image) {
+        return String(instance_image->name().c_str());
+    }
+    return "";
+}
+
 // --- RiveViewModelInstance ---
 
 void RiveViewModelInstance::_bind_methods() {
@@ -327,6 +366,7 @@ void RiveViewModelInstance::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_color_property", "path"), &RiveViewModelInstance::get_color_property);
     ClassDB::bind_method(D_METHOD("get_enum_property", "path"), &RiveViewModelInstance::get_enum_property);
     ClassDB::bind_method(D_METHOD("get_trigger_property", "path"), &RiveViewModelInstance::get_trigger_property);
+    ClassDB::bind_method(D_METHOD("get_image_property", "path"), &RiveViewModelInstance::get_image_property);
 }
 
 void RiveViewModelInstance::_init(rive::rcp<rive::ViewModelInstance> p_instance) {
@@ -498,6 +538,29 @@ Ref<RiveViewModelTrigger> RiveViewModelInstance::get_trigger_property(const Stri
     return nullptr;
 }
 
+Ref<RiveViewModelImage> RiveViewModelInstance::get_image_property(const String& p_path) {
+    if (!instance) return nullptr;
+    if (property_cache.has(p_path)) {
+        Ref<RiveViewModelProperty> prop = property_cache[p_path];
+        if (prop.is_valid() && Object::cast_to<RiveViewModelImage>(prop.ptr())) {
+            return Ref<RiveViewModelImage>(Object::cast_to<RiveViewModelImage>(prop.ptr()));
+        }
+    }
+    String prop_name;
+    rive::ViewModelInstance* target_vm = resolve_view_model_instance(instance.get(), p_path, prop_name);
+    if (target_vm) {
+        rive::ViewModelInstanceValue* prop = target_vm->propertyValue(prop_name.utf8().get_data());
+        if (prop && prop->is<rive::ViewModelInstanceAssetImage>()) {
+            Ref<RiveViewModelImage> ret;
+            ret.instantiate();
+            ret->_init(instance, prop->as<rive::ViewModelInstanceAssetImage>());
+            property_cache[p_path] = ret;
+            return ret;
+        }
+    }
+    return nullptr;
+}
+
 bool RiveViewModelInstance::_set(const StringName &p_name, const Variant &p_value) {
     if (!instance) return false;
     
@@ -527,6 +590,16 @@ bool RiveViewModelInstance::_set(const StringName &p_name, const Variant &p_valu
     } else if (prop->is<rive::ViewModelInstanceEnum>()) {
         prop->as<rive::ViewModelInstanceEnum>()->value((uint32_t)p_value);
         return true;
+    } else if (prop->is<rive::ViewModelInstanceAssetImage>()) {
+        Ref<Texture2D> texture = p_value;
+        if (texture.is_valid()) {
+            rive::rcp<rive::RenderImage> render_image = rive_integration::RiveTextureFactory::make_image(texture);
+            if (render_image) {
+                prop->as<rive::ViewModelInstanceAssetImage>()->value(render_image.get());
+                return true;
+            }
+        }
+        return true; // Handled, even if failed or null
     }
     
     return false;
@@ -593,6 +666,13 @@ bool RiveViewModelInstance::_get(const StringName &p_name, Variant &r_ret) const
         property_cache[name] = ret;
         r_ret = ret;
         return true;
+    } else if (prop->is<rive::ViewModelInstanceAssetImage>()) {
+        Ref<RiveViewModelImage> ret;
+        ret.instantiate();
+        ret->_init(instance, prop->as<rive::ViewModelInstanceAssetImage>());
+        property_cache[name] = ret;
+        r_ret = ret;
+        return true;
     } else if (prop->is<rive::ViewModelInstanceViewModel>()) {
         rive::ViewModelInstanceViewModel* vm_prop = prop->as<rive::ViewModelInstanceViewModel>();
         if (vm_prop) {
@@ -632,6 +712,8 @@ void RiveViewModelInstance::_get_property_list(List<PropertyInfo> *p_list) const
             p_list->push_back(PropertyInfo(Variant::OBJECT, name, PROPERTY_HINT_RESOURCE_TYPE, "RiveViewModelEnum"));
         } else if (prop->is<rive::ViewModelInstanceTrigger>()) {
             p_list->push_back(PropertyInfo(Variant::OBJECT, name, PROPERTY_HINT_RESOURCE_TYPE, "RiveViewModelTrigger"));
+        } else if (prop->is<rive::ViewModelInstanceAssetImage>()) {
+            p_list->push_back(PropertyInfo(Variant::OBJECT, name, PROPERTY_HINT_RESOURCE_TYPE, "RiveViewModelImage"));
         } else if (prop->is<rive::ViewModelInstanceViewModel>()) {
              p_list->push_back(PropertyInfo(Variant::OBJECT, name, PROPERTY_HINT_RESOURCE_TYPE, "RiveViewModelInstance"));
         }

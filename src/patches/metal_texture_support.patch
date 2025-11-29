@@ -1,0 +1,45 @@
+diff --git a/renderer/include/rive/renderer/metal/render_context_metal_impl.h b/renderer/include/rive/renderer/metal/render_context_metal_impl.h
+index 83904312..d3009f26 100644
+--- a/renderer/include/rive/renderer/metal/render_context_metal_impl.h
++++ b/renderer/include/rive/renderer/metal/render_context_metal_impl.h
+@@ -133,6 +133,8 @@ public:
+                                   uint32_t mipLevelCount,
+                                   const uint8_t imageDataRGBAPremul[]) override;
+ 
++    rcp<Texture> makeImageTexture(uint32_t width, uint32_t height, id<MTLTexture> texture);
++
+     // Atomic mode requires a barrier between overlapping draws. We have to
+     // implement this barrier in various different ways, depending on which
+     // hardware we're on.
+diff --git a/renderer/src/metal/render_context_metal_impl.mm b/renderer/src/metal/render_context_metal_impl.mm
+index c930b22d..1abc060c 100644
+--- a/renderer/src/metal/render_context_metal_impl.mm
++++ b/renderer/src/metal/render_context_metal_impl.mm
+@@ -828,6 +828,12 @@ void onUnmap() override {}
+                      bytesPerRow:width * 4];
+     }
+ 
++    TextureMetalImpl(uint32_t width, uint32_t height, id<MTLTexture> texture) :
++        Texture(width, height), m_texture(texture)
++    {
++        m_mipsDirty = false;
++    }
++
+     void ensureMipmaps(id<MTLCommandBuffer> commandBuffer) const
+     {
+         if (m_mipsDirty)
+@@ -858,6 +864,14 @@ void ensureMipmaps(id<MTLCommandBuffer> commandBuffer) const
+         m_gpu, width, height, mipLevelCount, imageDataRGBAPremul);
+ }
+ 
++rcp<Texture> RenderContextMetalImpl::makeImageTexture(
++    uint32_t width,
++    uint32_t height,
++    id<MTLTexture> texture)
++{
++    return make_rcp<TextureMetalImpl>(width, height, texture);
++}
++
+ std::unique_ptr<BufferRing> RenderContextMetalImpl::makeUniformBufferRing(
+     size_t capacityInBytes)
+ {

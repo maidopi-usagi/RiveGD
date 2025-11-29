@@ -301,18 +301,9 @@ for d in dirs_to_scan:
                 if f == "load_gles_extensions.cpp" and rive_env["platform"] != "android":
                     continue
                 
-                if f == "render_context_gl_impl.cpp":
-                    continue
-                if f == "render_buffer_gl_impl.cpp":
-                    continue
                 rive_sources.append(os.path.join(root, f))
 
-# Add patched files from the main project
-# We need to go up two levels to get to the root of the repo
-repo_root = os.path.dirname(os.path.dirname(rive_dir))
-patches_dir = os.path.join(repo_root, "src", "patches")
-rive_sources.append(os.path.join(patches_dir, "render_context_gl_impl.cpp"))
-rive_sources.append(os.path.join(patches_dir, "render_buffer_gl_impl.cpp"))
+
 
 
 # On macOS exclude D3D12 renderer source(s) that live in the project `src/` directory.
