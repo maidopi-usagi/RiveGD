@@ -43,6 +43,9 @@ PFN_vkGetInstanceProcAddr load_vulkan_loader() {
 #elif __APPLE__
     g_vulkan_lib = dlopen("libvulkan.dylib", RTLD_NOW | RTLD_LOCAL);
     if (!g_vulkan_lib) g_vulkan_lib = dlopen("libvulkan.1.dylib", RTLD_NOW | RTLD_LOCAL);
+#elif defined(__ANDROID__)
+    // On Android the Vulkan loader is always libvulkan.so (no .1 suffix).
+    g_vulkan_lib = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
 #else
     g_vulkan_lib = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
     if (!g_vulkan_lib) g_vulkan_lib = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);

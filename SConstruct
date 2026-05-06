@@ -97,6 +97,9 @@ if extension_env["platform"] == "macos":
         "-framework", "CoreText",
         "-framework", "AudioToolbox"
     ])
+elif extension_env["platform"] == "android":
+    # Android system libraries required by Rive's Vulkan renderer
+    extension_env.Append(LIBS=["log", "android", "vulkan", "EGL", "GLESv3"])
 
 # Link against Rive Runtime
 extension_env.Append(LIBS=[rive_lib])

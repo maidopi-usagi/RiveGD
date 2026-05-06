@@ -1,3 +1,7 @@
+// Desktop OpenGL renderer — not compiled on Android (GLAD is unavailable there).
+// Android uses rive_renderer_gles.cpp with NDK GLES3 instead.
+#if !defined(__ANDROID__)
+
 #include "rive_renderer.h"
 #include "rive_render_registry.h"
 #include <godot_cpp/classes/rendering_server.hpp>
@@ -105,3 +109,5 @@ void render_texture_opengl(RID texture_rid, RiveDrawable *drawable, uint32_t wid
 }
 
 } // namespace rive_integration
+
+#endif // !defined(__ANDROID__)
