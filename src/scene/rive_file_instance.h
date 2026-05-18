@@ -24,6 +24,7 @@ private:
 
 protected:
     static void _bind_methods();
+    void _validate_property(PropertyInfo &p_property) const;
     void _notification(int p_what);
 
 public:

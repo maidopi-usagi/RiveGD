@@ -1,0 +1,14 @@
+[remap]
+
+importer="rive.import"
+type="RiveFile"
+uid="uid://y016xf00qs6r"
+path="res://.godot/imported/skills.riv-d544140966031826b35045e9ce73f41c.res"
+
+[deps]
+
+source_file="res://skills.riv"
+dest_files=["res://.godot/imported/skills.riv-d544140966031826b35045e9ce73f41c.res"]
+
+[params]
+

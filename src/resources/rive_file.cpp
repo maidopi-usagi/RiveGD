@@ -1,12 +1,16 @@
 #include "rive_file.h"
+#include "../renderer/godot_file_asset_loader.h"
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
 void RiveFile::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_data", "data"), &RiveFile::set_data);
     ClassDB::bind_method(D_METHOD("get_data"), &RiveFile::get_data);
+    ClassDB::bind_method(D_METHOD("set_source_path", "path"), &RiveFile::set_source_path);
+    ClassDB::bind_method(D_METHOD("get_source_path"), &RiveFile::get_source_path);
 
     ADD_PROPERTY(PropertyInfo(Variant::PACKED_BYTE_ARRAY, "data", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_STORAGE), "set_data", "get_data");
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "source_path", PROPERTY_HINT_FILE, "*.riv", PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_STORAGE), "set_source_path", "get_source_path");
 }
 
 RiveFile::RiveFile() {}
@@ -24,6 +28,14 @@ void RiveFile::set_data(const PackedByteArray &p_data) {
 
 PackedByteArray RiveFile::get_data() const {
     return data;
+}
+
+void RiveFile::set_source_path(const String &p_path) {
+    source_path = p_path;
+}
+
+String RiveFile::get_source_path() const {
+    return source_path;
 }
 
 Error RiveFile::load_rive_file() {
@@ -56,7 +68,20 @@ Error RiveFile::load_rive_file() {
 
     rive::Span<const uint8_t> bytes(data.ptr(), data.size());
     rive::ImportResult result;
-    rive_file = rive::File::import(bytes, factory, &result);
+
+    // Create a FileAssetLoader for out-of-band assets (fonts, images)
+    // Use source_path if set, otherwise fall back to Godot's Resource::get_path()
+    String effective_path = source_path;
+    if (effective_path.is_empty()) {
+        effective_path = get_path();
+    }
+    rive::rcp<rive_integration::GodotFileAssetLoader> asset_loader;
+    if (!effective_path.is_empty()) {
+        asset_loader = rive::rcp<rive_integration::GodotFileAssetLoader>(
+            new rive_integration::GodotFileAssetLoader(effective_path));
+    }
+
+    rive_file = rive::File::import(bytes, factory, &result, asset_loader);
 
     if (!rive_file) {
         UtilityFunctions::printerr("Failed to import Rive file. Result: ", (int)result);
@@ -97,4 +122,16 @@ std::unique_ptr<rive::ArtboardInstance> RiveFile::instantiate_artboard(String na
     }
     
     return artboard;
+}
+
+PackedStringArray RiveFile::get_artboard_list() const {
+    PackedStringArray list;
+    if (!rive_file) return list;
+    for (size_t i = 0; i < rive_file->artboardCount(); ++i) {
+        const rive::Artboard* ab = rive_file->artboard(i);
+        if (ab) {
+            list.push_back(String(ab->name().c_str()));
+        }
+    }
+    return list;
 }

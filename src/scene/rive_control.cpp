@@ -27,6 +27,8 @@ void RiveControl::_bind_methods()
     ClassDB::bind_method(D_METHOD("set_rive_file", "file"), &RiveControl::set_rive_file);
     ClassDB::bind_method(D_METHOD("get_rive_file"), &RiveControl::get_rive_file);
     ClassDB::bind_method(D_METHOD("_on_rive_file_changed"), &RiveControl::_on_rive_file_changed);
+    ClassDB::bind_method(D_METHOD("_on_rive_event", "name", "properties", "delay"), &RiveControl::_on_rive_event);
+    ClassDB::bind_method(D_METHOD("_on_rive_audio_event", "name", "audio_data", "format", "volume"), &RiveControl::_on_rive_audio_event);
 
     ClassDB::bind_method(D_METHOD("play_animation", "name"), &RiveControl::play_animation);
     ClassDB::bind_method(D_METHOD("play_state_machine", "name"), &RiveControl::play_state_machine);
@@ -48,6 +50,19 @@ void RiveControl::_bind_methods()
 
     ClassDB::bind_method(D_METHOD("set_property_values", "values"), &RiveControl::set_property_values);
     ClassDB::bind_method(D_METHOD("get_property_values"), &RiveControl::get_property_values);
+
+    ClassDB::bind_method(D_METHOD("simulate_click", "position"), &RiveControl::simulate_click);
+
+    ADD_SIGNAL(MethodInfo("rive_event",
+        PropertyInfo(Variant::STRING, "name"),
+        PropertyInfo(Variant::DICTIONARY, "properties"),
+        PropertyInfo(Variant::FLOAT, "delay")));
+
+    ADD_SIGNAL(MethodInfo("rive_audio_event",
+        PropertyInfo(Variant::STRING, "name"),
+        PropertyInfo(Variant::PACKED_BYTE_ARRAY, "audio_data"),
+        PropertyInfo(Variant::STRING, "format"),
+        PropertyInfo(Variant::FLOAT, "volume")));
 
     ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "rive_file", PROPERTY_HINT_RESOURCE_TYPE, "RiveFile"), "set_rive_file", "get_rive_file");
     ADD_PROPERTY(PropertyInfo(Variant::STRING, "animation_name"), "set_animation_name", "get_animation_name");
@@ -156,15 +171,36 @@ void RiveControl::_on_rive_file_changed() {
     queue_redraw();
 }
 
+void RiveControl::_on_rive_event(const String &p_name, const Dictionary &p_properties, float p_delay) {
+    emit_signal("rive_event", p_name, p_properties, p_delay);
+}
+
+void RiveControl::_on_rive_audio_event(const String &p_name, const PackedByteArray &p_audio_data, const String &p_format, float p_volume) {
+    emit_signal("rive_audio_event", p_name, p_audio_data, p_format, p_volume);
+}
+
 void RiveControl::load_file()
 {
     if (rive_file.is_null())
         return;
 
     PackedByteArray data = rive_file->get_data();
+    // Use source_path if set, otherwise fall back to Godot's Resource::get_path()
+    String asset_path = rive_file->get_source_path();
+    if (asset_path.is_empty()) {
+        asset_path = rive_file->get_path();
+    }
 
     if (rive_player.is_valid()) {
-        if (rive_player->load_from_bytes(data)) {
+        if (rive_player->load_from_bytes(data, asset_path)) {
+            // Forward rive_event signals from the player
+            if (!rive_player->is_connected("rive_event", Callable(this, "_on_rive_event"))) {
+                rive_player->connect("rive_event", Callable(this, "_on_rive_event"));
+            }
+            // Forward rive_audio_event signals from the player
+            if (!rive_player->is_connected("rive_audio_event", Callable(this, "_on_rive_audio_event"))) {
+                rive_player->connect("rive_audio_event", Callable(this, "_on_rive_audio_event"));
+            }
             _apply_property_values();
             notify_property_list_changed();
             UtilityFunctions::print_verbose("Rive file loaded successfully.");
@@ -602,4 +638,13 @@ Ref<RiveViewModelInstance> RiveControl::get_view_model_instance() const {
         return rive_player->get_rive_view_model_instance();
     }
     return nullptr;
+}
+
+void RiveControl::simulate_click(Vector2 position) {
+    if (!rive_player.is_valid()) return;
+    // Position is in Rive coordinate space (not Godot local space).
+    // Use identity transform so no coordinate conversion happens.
+    rive::Mat2D identity;
+    rive_player->pointer_down(position, identity);
+    rive_player->pointer_up(position, identity);
 }

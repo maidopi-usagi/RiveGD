@@ -17,3 +17,5 @@ macos.debug = "bin/libgodot-rive.macos.debug.framework/libgodot-rive.macos.debug
 macos.release = "bin/libgodot-rive.macos.release.framework"
 android.debug.arm64 = "bin/libgodot-rive.android.debug.arm64.so"
 android.release.arm64 = "bin/libgodot-rive.android.release.arm64.so"
+web.debug.wasm32 = "bin/libgodot-rive.web.debug.wasm32.wasm"
+web.release.wasm32 = "bin/libgodot-rive.web.release.wasm32.wasm"

@@ -50,6 +50,8 @@ protected:
     rive::Mat2D _get_rive_transform() const;
     void _apply_property_values();
     void _on_rive_file_changed();
+    void _on_rive_event(const String &p_name, const Dictionary &p_properties, float p_delay);
+    void _on_rive_audio_event(const String &p_name, const PackedByteArray &p_audio_data, const String &p_format, float p_volume);
 
 public:
     RiveControl();
@@ -90,6 +92,9 @@ public:
 
     Ref<RiveViewModelInstance> get_view_model_instance() const;
     Ref<RivePlayer> get_rive_player() const { return rive_player; }
+
+    // Simulate a click at a local position (for testing/GDScript use)
+    void simulate_click(Vector2 position);
 };
 
 #endif // RIVE_CONTROL_H

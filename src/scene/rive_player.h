@@ -13,6 +13,7 @@
 #include <rive/animation/state_machine_instance.hpp>
 #include <rive/viewmodel/viewmodel_instance.hpp>
 #include <rive/renderer.hpp>
+#include "../renderer/godot_file_asset_loader.h"
 #include "rive_view_model.h"
 
 using namespace godot;
@@ -38,7 +39,7 @@ public:
     RivePlayer();
     ~RivePlayer();
 
-    bool load_from_bytes(const PackedByteArray &data);
+    bool load_from_bytes(const PackedByteArray &data, const String &asset_path = "");
     bool load(rive::rcp<rive::File> file);
     void set_artboard(std::unique_ptr<rive::ArtboardInstance> p_artboard, rive::rcp<rive::File> p_file = nullptr);
     

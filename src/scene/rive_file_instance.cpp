@@ -23,10 +23,46 @@ void RiveFileInstance::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_view_model_instance"), &RiveFileInstance::get_view_model_instance);
 
     ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "rive_file", PROPERTY_HINT_RESOURCE_TYPE, "RiveFile"), "set_rive_file", "get_rive_file");
-    ADD_PROPERTY(PropertyInfo(Variant::STRING, "artboard_name"), "set_artboard_name", "get_artboard_name");
-    ADD_PROPERTY(PropertyInfo(Variant::STRING, "state_machine_name"), "set_state_machine_name", "get_state_machine_name");
-    ADD_PROPERTY(PropertyInfo(Variant::STRING, "animation_name"), "set_animation_name", "get_animation_name");
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "artboard_name", PROPERTY_HINT_ENUM, ""), "set_artboard_name", "get_artboard_name");
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "state_machine_name", PROPERTY_HINT_ENUM, ""), "set_state_machine_name", "get_state_machine_name");
+    ADD_PROPERTY(PropertyInfo(Variant::STRING, "animation_name", PROPERTY_HINT_ENUM, ""), "set_animation_name", "get_animation_name");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_play"), "set_auto_play", "get_auto_play");
+}
+
+void RiveFileInstance::_validate_property(PropertyInfo &p_property) const {
+    if (!rive_file_resource.is_valid() || rive_file_resource.is_null()) return;
+
+    if (p_property.name == StringName("artboard_name")) {
+        PackedStringArray list = rive_file_resource->get_artboard_list();
+        String hint_string;
+        for (int i = 0; i < list.size(); i++) {
+            if (i > 0) hint_string += ",";
+            hint_string += list[i];
+        }
+        p_property.hint_string = hint_string;
+    }
+    else if (p_property.name == StringName("state_machine_name")) {
+        String hint_string;
+        if (rive_player.is_valid()) {
+            PackedStringArray list = rive_player->get_state_machine_list();
+            for (int i = 0; i < list.size(); i++) {
+                if (i > 0) hint_string += ",";
+                hint_string += list[i];
+            }
+        }
+        p_property.hint_string = hint_string;
+    }
+    else if (p_property.name == StringName("animation_name")) {
+        String hint_string;
+        if (rive_player.is_valid()) {
+            PackedStringArray list = rive_player->get_animation_list();
+            for (int i = 0; i < list.size(); i++) {
+                if (i > 0) hint_string += ",";
+                hint_string += list[i];
+            }
+        }
+        p_property.hint_string = hint_string;
+    }
 }
 
 RiveFileInstance::RiveFileInstance() {
@@ -47,6 +83,7 @@ void RiveFileInstance::_notification(int p_what) {
 void RiveFileInstance::set_rive_file(const Ref<RiveFile> &p_file) {
     rive_file_resource = p_file;
     _load_artboard();
+    notify_property_list_changed();
     queue_redraw();
 }
 

@@ -25,7 +25,7 @@ bool create_metal_context(RenderingDevice* rd);
 void render_texture_metal(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height);
 #endif
 
-#if defined(RIVE_DESKTOP_GL)
+#if defined(RIVE_DESKTOP_GL) || defined(RIVE_ANDROID) || defined(RIVE_WEBGL)
 bool create_opengl_context();
 void render_texture_opengl(RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height);
 #endif
@@ -59,7 +59,7 @@ void initialize_rive_renderer() {
         UtilityFunctions::printerr("Rive: Metal support not compiled in.");
 #endif
     } else if (api == "opengl3") {
-#if defined(RIVE_DESKTOP_GL)
+#if defined(RIVE_DESKTOP_GL) || defined(RIVE_ANDROID) || defined(RIVE_WEBGL)
         success = create_opengl_context();
 #else
         UtilityFunctions::printerr("Rive: OpenGL support not compiled in.");
@@ -112,7 +112,7 @@ void render_texture(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable
         if (rd) render_texture_metal(rd, texture_rid, drawable, width, height);
 #endif
     } else if (api == "opengl3") {
-#if defined(RIVE_DESKTOP_GL)
+#if defined(RIVE_DESKTOP_GL) || defined(RIVE_ANDROID) || defined(RIVE_WEBGL)
         render_texture_opengl(texture_rid, drawable, width, height);
 #endif
     }

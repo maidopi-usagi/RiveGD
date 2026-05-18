@@ -60,6 +60,7 @@ Error RiveImportPlugin::_import(const String &source_file, const String &save_pa
     Ref<RiveFile> rive_file;
     rive_file.instantiate();
     rive_file->set_data(data);
+    rive_file->set_source_path(source_file);
     
     return ResourceSaver::get_singleton()->save(rive_file, save_path + String(".") + _get_save_extension());
 }

@@ -1,0 +1,14 @@
+[remap]
+
+importer="rive.import"
+type="RiveFile"
+uid="uid://c5sc4gj145nhj"
+path="res://.godot/imported/sound.riv-c2db190864cfec3f62225995b62305b4.res"
+
+[deps]
+
+source_file="res://sound.riv"
+dest_files=["res://.godot/imported/sound.riv-c2db190864cfec3f62225995b62305b4.res"]
+
+[params]
+

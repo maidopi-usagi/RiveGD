@@ -1,0 +1,14 @@
+[remap]
+
+importer="rive.import"
+type="RiveFile"
+uid="uid://x002ln7ljp8t"
+path="res://.godot/imported/planets.riv-857461084d3d0f30bbfc8afcceece87d.res"
+
+[deps]
+
+source_file="res://planets.riv"
+dest_files=["res://.godot/imported/planets.riv-857461084d3d0f30bbfc8afcceece87d.res"]
+
+[params]
+

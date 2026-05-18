@@ -49,3 +49,26 @@ compile_commands.json
 .vscode/
 *.os
 AGENTS.md
+
+# Godot editor cache
+*.gd.uid
+
+# Build/export artifacts
+build/
+*.apk
+*.apk.idsig
+*.pck
+
+# Web WASM (not functional, do not track)
+*.wasm
+
+# Local dev notes
+PLAN.md
+
+# Export presets (local config)
+project/export_presets.cfg
+
+# Test scripts (local development)
+project/audio_test.*
+project/event_test.*
+project/font_obb_test.*

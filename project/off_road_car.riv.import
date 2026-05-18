@@ -1,0 +1,14 @@
+[remap]
+
+importer="rive.import"
+type="RiveFile"
+uid="uid://c25ney33pybbd"
+path="res://.godot/imported/off_road_car.riv-40f4d64d4a1409ee99ba52812bbb33de.res"
+
+[deps]
+
+source_file="res://off_road_car.riv"
+dest_files=["res://.godot/imported/off_road_car.riv-40f4d64d4a1409ee99ba52812bbb33de.res"]
+
+[params]
+

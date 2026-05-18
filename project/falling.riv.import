@@ -1,0 +1,14 @@
+[remap]
+
+importer="rive.import"
+type="RiveFile"
+uid="uid://cn7vk6m0213ep"
+path="res://.godot/imported/falling.riv-3fc653cdf17b2e1ff1fee5ffdec020c2.res"
+
+[deps]
+
+source_file="res://falling.riv"
+dest_files=["res://.godot/imported/falling.riv-3fc653cdf17b2e1ff1fee5ffdec020c2.res"]
+
+[params]
+

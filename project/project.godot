@@ -24,3 +24,8 @@ window/vsync/vsync_mode=0
 [dotnet]
 
 project/assembly_name="Rive Extension"
+
+[rendering]
+
+renderer/rendering_method="mobile"
+textures/vram_compression/import_etc2_astc=true

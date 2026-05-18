@@ -71,6 +71,9 @@ def _basename(node):
 excludes = {"render_context_gl_impl.cpp", "render_buffer_gl_impl.cpp"}
 if extension_env["platform"] != "windows":
     excludes.update({"rive_renderer_d3d12.cpp", "rive_renderer_d3d12.mm", "rive_renderer_d3d12.c"})
+if extension_env["platform"] == "macos":
+    # macOS uses Metal only — exclude OpenGL renderer (glad-dependent)
+    excludes.update({"rive_renderer_opengl.cpp"})
 
 filtered_sources = []
 for s in sources:

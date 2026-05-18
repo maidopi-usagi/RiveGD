@@ -93,4 +93,10 @@ extern "C" {
 
         return init_obj.init();
     }
+
+    // Alias entry symbol for backward compatibility with .gdextension files
+    // that use "rive_godot_library_init" as the entry_symbol
+    GDExtensionBool GDE_EXPORT rive_godot_library_init(GDExtensionInterfaceGetProcAddress p_get_proc_address, GDExtensionClassLibraryPtr p_library, GDExtensionInitialization *r_initialization) {
+        return gdextension_init(p_get_proc_address, p_library, r_initialization);
+    }
 }

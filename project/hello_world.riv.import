@@ -1,0 +1,14 @@
+[remap]
+
+importer="rive.import"
+type="RiveFile"
+uid="uid://dgrblt16o5wm8"
+path="res://.godot/imported/hello_world.riv-c0997a555772865291fcb84a767dd078.res"
+
+[deps]
+
+source_file="res://hello_world.riv"
+dest_files=["res://.godot/imported/hello_world.riv-c0997a555772865291fcb84a767dd078.res"]
+
+[params]
+

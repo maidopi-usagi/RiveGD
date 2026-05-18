@@ -180,7 +180,7 @@ rive_env.Append(CPPPATH=[
 ])
 
 rive_env.Append(CPPDEFINES=[
-    '_RIVE_INTERNAL_', 'RIVE_DESKTOP_GL', 'WITH_RIVE_TEXT', 'WITH_RIVE_TOOLS',
+    '_RIVE_INTERNAL_', 'WITH_RIVE_TEXT', 'WITH_RIVE_TOOLS',
     'WITH_RIVE_LAYOUT', 'YOGA_EXPORT=',
     'WITH_RIVE_AUDIO', 'MA_NO_RESOURCE_MANAGER',
     'RIVE_PNG', 'RIVE_JPEG', 'RIVE_WEBP', 'RIVE_DECODERS',
@@ -208,8 +208,8 @@ rive_env.Append(CPPDEFINES=[
 if rive_env["platform"] != "windows":
     rive_env.Append(CCFLAGS=['-Wno-unused-function', '-Wno-error=unused-function', '-Wno-macro-redefined'])
 
-# Force include unistd.h for zlib on macOS to fix implicit function declaration errors
-if rive_env["platform"] == "macos":
+# Force include unistd.h for zlib on macOS/Android/Web to fix implicit function declaration errors
+if rive_env["platform"] in ["macos", "android", "web"]:
     rive_env.Append(CCFLAGS=['-include', 'unistd.h'])
 
 # Force include rive_harfbuzz_renames.h
@@ -229,8 +229,8 @@ if rive_env["platform"] == "macos":
     rive_env.Append(CCFLAGS=["-fobjc-arc"])
     rive_env.Append(FRAMEWORKS=["Metal", "Foundation", "QuartzCore", "AppKit", "CoreGraphics", "CoreText", "AudioToolbox"])
     rive_env.Append(CPPDEFINES=["RIVE_METAL"])
-elif rive_env["platform"] in ["windows", "linuxbsd", "android"]:
-    rive_env.Append(CPPDEFINES=["RIVE_VULKAN", "RIVE_UPSTREAM_VULKAN_IMPL", "VULKAN_ENABLED"])
+elif rive_env["platform"] in ["windows", "linuxbsd"]:
+    rive_env.Append(CPPDEFINES=["RIVE_DESKTOP_GL", "RIVE_VULKAN", "RIVE_UPSTREAM_VULKAN_IMPL", "VULKAN_ENABLED"])
 
     # Pick up VULKAN_SDK headers on Windows + Linux (LunarG ships modern Vulkan headers
     # the system packages may be too old for, e.g. VK_ARM_format_pack added in 1.4.318).
@@ -248,41 +248,76 @@ elif rive_env["platform"] in ["windows", "linuxbsd", "android"]:
                 rive_env.Append(LIBPATH=[lib_dir])
                 break
 
-    if rive_env["platform"] == "windows":
-        # D3D12 configuration (Windows only)
-        rive_env.Append(CPPDEFINES=["RIVE_D3D12", "D3D12_ENABLED", "_USE_MATH_DEFINES", "NOMINMAX"])
-        rive_env.Append(CXXFLAGS=["/std:c++20"])
-        
-        # Link system libraries
-        rive_env.Append(LIBS=["d3d12", "dxgi", "d3dcompiler", "opengl32", "vulkan-1", "dxguid", "uuid", "delayimp"])
-        
-        # Delay load Vulkan to avoid crash if missing
-        rive_env.Append(LINKFLAGS=["/DELAYLOAD:vulkan-1.dll"])
+elif rive_env["platform"] == "android":
+    # Android supports both Vulkan and OpenGL/GLES backends
+    rive_env.Append(CPPDEFINES=["RIVE_ANDROID", "RIVE_VULKAN", "RIVE_UPSTREAM_VULKAN_IMPL", "VULKAN_ENABLED"])
+    rive_env.Append(LIBS=["GLESv3", "EGL", "vulkan"])
 
-        # Prioritize Godot build deps for D3DX12
-        local_app_data = os.environ.get("LOCALAPPDATA")
-        if local_app_data:
-            godot_d3d_deps = os.path.join(local_app_data, "Godot", "build_deps", "agility_sdk", "build", "native", "include", "d3dx12")
-            if os.path.exists(godot_d3d_deps):
-                print(f"RIVE: Using Godot D3D deps from {godot_d3d_deps}")
-                rive_env.Append(CPPPATH=[godot_d3d_deps])
+elif rive_env["platform"] == "web":
+    # Web platform: WebGL via Emscripten
+    rive_env.Append(CPPDEFINES=["RIVE_WEBGL"])
+    # Emscripten provides GLES3 headers natively
+    # No need for glad, EGL, or Vulkan on web
 
-        # Add support for external DirectX Headers via env var
-        dx_headers = os.environ.get("DIRECTX_HEADERS_PATH")
-        if dx_headers:
-            print(f"RIVE: Using DirectX Headers from {dx_headers}")
-            rive_env.Append(CPPPATH=[
-                dx_headers,
-                os.path.join(dx_headers, "include"),
-                os.path.join(dx_headers, "include", "directx"),
-                os.path.join(dx_headers, "include", "dxguids")
+    # C++20 required for libc++ source files (constinit, ranges, etc.)
+    rive_env.Append(CXXFLAGS=["-std=c++20"])
+    # Required macro when compiling libc++ sources - enables internal APIs
+    rive_env.Append(CPPDEFINES=["_LIBCPP_BUILDING_LIBRARY"])
+    # Force __hash_memory to be inline (not external) - LLVM 23 sets this to 1
+    # which makes __hash_memory an external symbol, but SIDE_MODULE can't import it
+    rive_env.Append(CPPDEFINES=["_LIBCPP_AVAILABILITY_HAS_HASH_MEMORY=0"])
+    # Remove libc++ ABI tags (B8nn210108 etc) so our symbol names match
+    # Godot's dlink template exports (which use B8nn200100 or no tag).
+    # Without this, iostream/locale symbols have mismatched ABI tags.
+    rive_env.Append(CPPDEFINES=["_LIBCPP_NO_ABI_TAG"])
+
+    # Emscripten's SIDE_MODULE mode skips stdlib linking (system_libs.py line 2388),
+    # and Godot's dlink template doesn't export libc++ symbols either.
+    # Solution: compile libc++ source files directly into our static library.
+    # Since rive_env already has -fPIC (from SIDE_MODULE), these will be PIC-compatible.
+    emsdk_dir = os.environ.get("EMSDK", "")
+    libcxx_src = os.path.join(emsdk_dir, "upstream", "emscripten", "system", "lib", "libcxx", "src")
+    # NOTE: Do NOT add libcxx/include to CPPPATH - emcc already provides it via sysroot
+    # (cache/sysroot/include/c++/v1). Adding it manually causes math.h conflicts.
+
+    # Add pthread stubs for nothreads build (Rive uses std::mutex etc)
+    rive_env.Append(CPPDEFINES=["RIVE_WEB_NOTHREADS"])
+
+if rive_env["platform"] == "windows":
+    # D3D12 configuration (Windows only)
+    rive_env.Append(CPPDEFINES=["RIVE_D3D12", "D3D12_ENABLED", "_USE_MATH_DEFINES", "NOMINMAX"])
+    rive_env.Append(CXXFLAGS=["/std:c++20"])
+    
+    # Link system libraries
+    rive_env.Append(LIBS=["d3d12", "dxgi", "d3dcompiler", "opengl32", "vulkan-1", "dxguid", "uuid", "delayimp"])
+    
+    # Delay load Vulkan to avoid crash if missing
+    rive_env.Append(LINKFLAGS=["/DELAYLOAD:vulkan-1.dll"])
+
+    # Prioritize Godot build deps for D3DX12
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        godot_d3c_deps = os.path.join(local_app_data, "Godot", "build_deps", "agility_sdk", "build", "native", "include", "d3dx12")
+        if os.path.exists(godot_d3c_deps):
+            print(f"RIVE: Using Godot D3D deps from {godot_d3c_deps}")
+            rive_env.Append(CPPPATH=[godot_d3c_deps])
+
+    # Add support for external DirectX Headers via env var
+    dx_headers = os.environ.get("DIRECTX_HEADERS_PATH")
+    if dx_headers:
+        print(f"RIVE: Using DirectX Headers from {dx_headers}")
+        rive_env.Append(CPPPATH=[
+            dx_headers,
+            os.path.join(dx_headers, "include"),
+            os.path.join(dx_headers, "include", "directx"),
+            os.path.join(dx_headers, "include", "dxguids")
             ])
-        
-        # Add support for D3D12MA via env var
-        d3d12ma_path = os.environ.get("D3D12MA_PATH")
-        if d3d12ma_path:
-            print(f"RIVE: Using D3D12MA from {d3d12ma_path}")
-            rive_env.Append(CPPPATH=[d3d12ma_path])
+    
+    # Add support for D3D12MA via env var
+    d3d12ma_path = os.environ.get("D3D12MA_PATH")
+    if d3d12ma_path:
+        print(f"RIVE: Using D3D12MA from {d3d12ma_path}")
+        rive_env.Append(CPPPATH=[d3d12ma_path])
 
 # Collect Rive sources
 rive_sources = []
@@ -291,12 +326,12 @@ dirs_to_scan = [
     os.path.join(rive_dir, 'renderer', 'src')
 ]
 
-exclude_dir_names = {'d3d', 'd3d11', 'd3d12', 'vulkan', 'webgpu', 'dawn', 'android', 'ios'}
+exclude_dir_names = {'d3d', 'd3d11', 'd3d12', 'vulkan', 'webgpu', 'dawn', 'android', 'ios', 'webgl'}
 if rive_env["platform"] != "macos":
     exclude_dir_names.add('metal')
 else:
-    # macOS: explicitly exclude all D3D directories
-    exclude_dir_names.update({'d3d', 'd3d11', 'd3d12'})
+    # macOS: explicitly exclude all D3D directories and GL (macOS uses Metal only)
+    exclude_dir_names.update({'d3d', 'd3d11', 'd3d12', 'gl'})
 
 if rive_env["platform"] in ["windows", "linuxbsd", "android"]:
     if 'vulkan' in exclude_dir_names: exclude_dir_names.remove('vulkan')
@@ -311,8 +346,15 @@ for d in dirs_to_scan:
         dirs[:] = [x for x in dirs if x not in exclude_dir_names]
         for f in files:
             if f.endswith('.cpp') or (f.endswith('.mm') and rive_env["platform"] == "macos"):
-                # Exclude EGL dependent file on non-Android platforms
+                # Exclude EGL-dependent file on platforms that don't use EGL
+                # (Web uses Emscripten's built-in WebGL, not EGL)
                 if f == "load_gles_extensions.cpp" and rive_env["platform"] != "android":
+                    continue
+                # Exclude WebGL PLS impl on non-web platforms
+                if f == "pls_impl_webgl.cpp" and rive_env["platform"] != "web":
+                    continue
+                # Exclude native PLS impls on Web (only pls_impl_webgl.cpp is used)
+                if rive_env["platform"] == "web" and f in ["pls_impl_ext_native.cpp", "pls_impl_rw_texture.cpp"]:
                     continue
                 
                 rive_sources.append(os.path.join(root, f))
@@ -329,7 +371,8 @@ if rive_env["platform"] == "macos":
         except Exception:
             return str(node)
 
-    d3d_excludes = {"rive_renderer_d3d12.cpp", "rive_renderer_d3d12.mm", "rive_renderer_d3d12.c"}
+    d3d_excludes = {"rive_renderer_d3d12.cpp", "rive_renderer_d3d12.mm", "rive_renderer_d3d12.c",
+                    "rive_renderer_opengl.cpp"}
     filtered_sources = []
     for s in rive_sources:
         name = _basename(s)
@@ -339,9 +382,10 @@ if rive_env["platform"] == "macos":
         filtered_sources.append(s)
     rive_sources = filtered_sources
 
-rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "glad_custom.c"))
-rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "src", "gles2.c"))
-rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "src", "egl.c"))
+if rive_env["platform"] not in ["android", "web", "macos"]:
+    rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "glad_custom.c"))
+    rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "src", "gles2.c"))
+    rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "src", "egl.c"))
 
 # Add HarfBuzz and SheenBidi sources
 harfbuzz_sources = glob(os.path.join(harfbuzz_dir, "src", "*.cc"))
@@ -488,6 +532,51 @@ rive_decoders_sources = [
 ]
 for s in rive_decoders_sources:
     rive_sources.append(os.path.join(rive_decoders_dir, s))
+
+# --- Web platform: exclude unused sources + add libc++ sources ---
+if rive_env["platform"] == "web":
+    # Exclude sources that use std::thread heavily and aren't needed by our plugin
+    web_excludes = {
+        "command_server.cpp",   # uses std::thread - not used by our plugin
+        "command_queue.cpp",    # uses std::mutex/condition_variable - not used by our plugin
+        "animation_reset_factory.cpp",  # not used by our plugin
+    }
+    filtered_sources = []
+    for s in rive_sources:
+        basename = os.path.basename(s)
+        if basename in web_excludes:
+            print(f"RIVE: Excluding {basename} on web (unused dependency)")
+            continue
+        filtered_sources.append(s)
+    rive_sources = filtered_sources
+
+    # Add libc++ source files to provide stdlib symbols that SIDE_MODULE skips
+    # and Godot's dlink template doesn't export.
+    # These are compiled with rive_env which has -fPIC (from SIDE_MODULE).
+    emsdk_dir = os.environ.get("EMSDK", "")
+    libcxx_src = os.path.join(emsdk_dir, "upstream", "emscripten", "system", "lib", "libcxx", "src")
+    libcxx_sources = [
+        "hash.cpp",              # __next_prime (note: __hash_memory is now inline via availability.h patch)
+        "string.cpp",            # std::string operations
+        "ios.cpp",               # ios_base::init, ios_base::clear
+        "ostream.cpp",           # std::ostream
+        "iostream.cpp",          # std::iostream
+        "locale.cpp",            # std::locale
+        "chrono.cpp",            # std::chrono::steady_clock::now
+        "condition_variable.cpp", # std::condition_variable (stubbed by web_pthread_stubs)
+        "mutex.cpp",             # std::mutex (stubbed by web_pthread_stubs)
+        "algorithm.cpp",         # std::__sort
+        "new.cpp",               # operator new/delete
+        "stdexcept.cpp",         # std::runtime_error etc
+        "typeinfo.cpp",          # __dynamic_cast support
+    ]
+    for s in libcxx_sources:
+        src_path = os.path.join(libcxx_src, s)
+        if os.path.exists(src_path):
+            rive_sources.append(src_path)
+            print(f"RIVE: Adding libc++ source: {s}")
+        else:
+            print(f"RIVE: WARNING - libc++ source not found: {src_path}")
 
 # Build the library
 # We use StaticLibrary because we will link it into the final shared library
