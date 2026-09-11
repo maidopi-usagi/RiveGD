@@ -100,6 +100,8 @@ if extension_env["platform"] == "macos":
 elif extension_env["platform"] == "android":
     # Android system libraries required by Rive's Vulkan renderer
     extension_env.Append(LIBS=["log", "android", "vulkan", "EGL", "GLESv3"])
+    # Support Android devices that use 16 KB memory pages.
+    extension_env.Append(LINKFLAGS=["-Wl,-z,max-page-size=16384"])
 
 # Link against Rive Runtime
 extension_env.Append(LIBS=[rive_lib])
