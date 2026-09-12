@@ -6,7 +6,7 @@ An **unofficial** Rive runtime with hardware accelerated GPU Renderer for Godot 
 
 WIP!! PRs are welcomed.
 
-> Prebuilt binaries (macOS-universal, Windows-x86_64, Linux-x86_64; debug + release) are attached to every [GitHub Release](https://github.com/maidopi-usagi/RiveGD/releases).
+> Prebuilt binaries (macOS-universal, Windows-x86_64, Linux-x86_64, Android-arm64; debug + release) are attached to every [GitHub Release](https://github.com/maidopi-usagi/RiveGD/releases).
 
 
 https://github.com/user-attachments/assets/615cefe9-f9ba-4821-b8d4-bf70510b7d0c
@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/615cefe9-f9ba-4821-b8d4-bf70510b7d0c
 ## Features
 
 - **Hardware Accelerated Rendering**
-- **Multiple Backends**: Supports Vulkan, Metal, Direct3D 12, and OpenGL(partially).
+- **Multiple Backends**: Supports Vulkan, Metal, Direct3D 12, OpenGL (desktop, partially), and GLES3 (Android fallback).
 - **Godot Integration**:
     - `RiveControl`: A Control node for UI integration.
     - `RiveFileInstance`: A Node2D for 2D scene integration.
@@ -64,7 +64,9 @@ DO NOT USE IN PRODUCTION as APIs will change and stability is not tested well.
 
 ## Limitations
 
-- **Not tested on:** Android / iOS. Linux and Windows builds are produced by CI but only lightly smoke-tested.
+- **Android**: arm64 builds are produced by CI (Vulkan primary, GLES3 fallback). Not yet tested on a physical device — expect rough edges.
+- **iOS**: Not supported yet.
+- Linux and Windows builds are produced by CI but only lightly smoke-tested.
 - **OpenGL backend:** Godot uses OpenGL3 while Rive needs 4+. Applied a small patch upon official repo to support OpenGL3
    - MacOS doesn't support native GLES fallback so cannot work on MacOS right now. I'll looking into this when I have time, maybe fallback to ANGLE when ANGLE backend got fixed.
    - ANGLE Backend: Godot official builds links ANGLE statically. I can only make it work using dynamic-linked libEGL and libGLESv2.
@@ -72,7 +74,8 @@ DO NOT USE IN PRODUCTION as APIs will change and stability is not tested well.
 
 ## Todo
 
-- [ ] **Platform Support**: Test and fix builds for Linux, Android, and iOS.
+- [ ] **Platform Support**: Physical device testing for Android; iOS support.
+- [ ] **Android**: Color space correction (gamma→linear) for linear-color-space Godot projects.
 - [ ] **Rendering**: Add more vector drawing commands.
 - [ ] **Integration**: Implement `RiveRenderTargetTexture` for rendering Rive content to a Godot Texture resource.
 - [ ] **Events**: Add support for Rive Events (Note: Rive recommends using DataBinding/ViewModels for most interactions).
@@ -102,6 +105,10 @@ DO NOT USE IN PRODUCTION as APIs will change and stability is not tested well.
 - Shader compilation tools:
     - **Vulkan**: `glslangValidator` and `spirv-opt` (from Vulkan SDK)
     - **macOS (Metal)**: Xcode Command Line Tools (`xcrun`)
+- **Android**:
+    - Android SDK + NDK (the build system auto-detects the latest installed NDK version)
+    - `glslangValidator` and `spirv-opt` on PATH
+    - Modern Vulkan headers (≥ 1.4.318) — set `VULKAN_SDK` to a directory containing them, or let CI fetch them automatically
 
 ### Build Steps
 
@@ -134,6 +141,11 @@ DO NOT USE IN PRODUCTION as APIs will change and stability is not tested well.
    *Example (macOS debug):*
    ```bash
    scons platform=macos target=template_debug
+   ```
+
+   *Example (Android arm64 debug):*
+   ```bash
+   scons platform=android target=template_debug arch=arm64
    ```
 
 4. **Use in Godot**:

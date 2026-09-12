@@ -10,7 +10,7 @@ on:
         required: false
         default: ""
       platforms:
-        description: "Which platforms to build (comma-separated subset of: macos,windows,linux). Default: all."
+        description: "Which platforms to build (comma-separated subset of: macos,windows,linux,android). Default: all."
         required: false
         default: "all"
 
@@ -29,7 +29,8 @@ jobs:
           all='[
             {"name":"macos-universal","runner":"macos-14","platform":"macos","shader_platform":"macos","arch":"universal"},
             {"name":"windows-x86_64","runner":"windows-2022","platform":"windows","shader_platform":"windows","arch":"x86_64"},
-            {"name":"linux-x86_64","runner":"ubuntu-22.04","platform":"linux","shader_platform":"linuxbsd","arch":"x86_64"}
+            {"name":"linux-x86_64","runner":"ubuntu-22.04","platform":"linux","shader_platform":"linuxbsd","arch":"x86_64"},
+            {"name":"android-arm64","runner":"ubuntu-22.04","platform":"android","shader_platform":"linuxbsd","arch":"arm64"}
           ]'
           if [ "$PLATFORMS" = "all" ]; then
             filtered="$all"
@@ -69,6 +70,44 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential libgl1-mesa-dev libx11-dev libxrandr-dev libxcursor-dev libxinerama-dev libxi-dev glslang-tools spirv-tools
+
+      # Android: install shader tools.
+      - name: Install Android build deps
+        if: matrix.config.platform == 'android'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y glslang-tools spirv-tools
+
+      # Verify the pre-installed NDK toolchain is usable.
+      - name: Verify Android NDK toolchain
+        if: matrix.config.platform == 'android'
+        shell: bash
+        run: |
+          echo "ANDROID_NDK_ROOT=${ANDROID_NDK_ROOT}"
+          ls "${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin/" | head -5
+
+      # Fetch modern Vulkan headers (NDK sysroot lacks VK_ARM_format_pack added in 1.4.318)
+      # and VulkanMemoryAllocator. Expose them as a synthetic VULKAN_SDK so SConscript.rive
+      # prepends them to CPPPATH, overriding the NDK's stale vulkan_core.h.
+      - name: Fetch Vulkan headers and VMA for Android
+        if: matrix.config.platform == 'android'
+        shell: bash
+        run: |
+          ANDROID_VULKAN_SDK="$RUNNER_TEMP/android-vulkan-sdk"
+          mkdir -p "${ANDROID_VULKAN_SDK}/include"
+          # Vulkan-Headers 1.4.321 (adds VK_ARM_format_pack enums missing from NDK sysroot)
+          curl -fsSL "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.4.321.tar.gz" \
+            -o "$RUNNER_TEMP/vulkan-headers.tar.gz"
+          tar -xzf "$RUNNER_TEMP/vulkan-headers.tar.gz" -C "$RUNNER_TEMP"
+          cp -r "$RUNNER_TEMP/Vulkan-Headers-1.4.321/include/"* "${ANDROID_VULKAN_SDK}/include/"
+          # VulkanMemoryAllocator (header-only)
+          curl -fsSL -o "${ANDROID_VULKAN_SDK}/include/vk_mem_alloc.h" \
+            "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/v3.1.0/include/vk_mem_alloc.h"
+          mkdir -p "${ANDROID_VULKAN_SDK}/include/vma"
+          cp "${ANDROID_VULKAN_SDK}/include/vk_mem_alloc.h" "${ANDROID_VULKAN_SDK}/include/vma/"
+          echo "VULKAN_SDK=${ANDROID_VULKAN_SDK}" >> "$GITHUB_ENV"
+          echo "Android Vulkan SDK ready:"
+          ls "${ANDROID_VULKAN_SDK}/include/"
 
       # Windows: enable MSVC + ensure fxc.exe (Windows SDK) is on PATH for shader build.
       - name: Setup MSVC
@@ -133,7 +172,15 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          scons platform=${{ matrix.config.platform }} target=${{ matrix.target }} arch=${{ matrix.config.arch }} -j$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+          # For Android: detect the installed NDK version dynamically and pass it
+          # to scons so godot-cpp doesn't use its hardcoded default (28.1.x).
+          if [ "${{ matrix.config.platform }}" = "android" ]; then
+            NDK_VER=$(ls "${ANDROID_SDK_ROOT}/ndk/" | sort -V | tail -1)
+            echo "Using NDK version: ${NDK_VER}"
+            scons platform=${{ matrix.config.platform }} target=${{ matrix.target }} arch=${{ matrix.config.arch }} ndk_version="${NDK_VER}" -j$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+          else
+            scons platform=${{ matrix.config.platform }} target=${{ matrix.target }} arch=${{ matrix.config.arch }} -j$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+          fi
 
       - name: Stage artifacts
         shell: bash

@@ -61,6 +61,8 @@ void initialize_rive_renderer() {
     } else if (api == "opengl3") {
 #if defined(RIVE_DESKTOP_GL)
         success = create_opengl_context();
+#elif defined(__ANDROID__)
+        success = create_gles_context();
 #else
         UtilityFunctions::printerr("Rive: OpenGL support not compiled in.");
 #endif
@@ -89,8 +91,11 @@ void cleanup_rive_renderer() {
 #if defined(VULKAN_ENABLED)
         cleanup_vulkan_context();
 #endif
+    } else if (api == "opengl3") {
+#if defined(__ANDROID__)
+        cleanup_gles_context();
+#endif
     }
-    // Add other backends cleanup if needed
 }
 
 void render_texture(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height) {
@@ -114,6 +119,8 @@ void render_texture(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable
     } else if (api == "opengl3") {
 #if defined(RIVE_DESKTOP_GL)
         render_texture_opengl(texture_rid, drawable, width, height);
+#elif defined(__ANDROID__)
+        render_texture_gles(texture_rid, drawable, width, height);
 #endif
     }
 }

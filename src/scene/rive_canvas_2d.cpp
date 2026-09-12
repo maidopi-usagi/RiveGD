@@ -142,11 +142,11 @@ void RiveCanvas2D::_draw() {
     if (!texture_target.is_valid()) return;
 
     texture_target->resize(size);
+    if (!texture_target->get_texture_rid().is_valid()) return;
 
     RenderingServer *rs = RenderingServer::get_singleton();
     if (!rs) return;
     RenderingDevice *rd = rs->get_rendering_device();
-    if (!rd) return;
 
     rive_integration::render_texture(rd, texture_target->get_texture_rid(), this, size.x, size.y);
 

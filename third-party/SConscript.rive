@@ -180,7 +180,7 @@ rive_env.Append(CPPPATH=[
 ])
 
 rive_env.Append(CPPDEFINES=[
-    '_RIVE_INTERNAL_', 'RIVE_DESKTOP_GL', 'WITH_RIVE_TEXT', 'WITH_RIVE_TOOLS',
+    '_RIVE_INTERNAL_', 'WITH_RIVE_TEXT', 'WITH_RIVE_TOOLS',
     'WITH_RIVE_LAYOUT', 'YOGA_EXPORT=',
     'WITH_RIVE_AUDIO', 'MA_NO_RESOURCE_MANAGER',
     'RIVE_PNG', 'RIVE_JPEG', 'RIVE_WEBP', 'RIVE_DECODERS',
@@ -203,13 +203,20 @@ rive_env.Append(CPPDEFINES=[
     'HB_NO_META',
     'SB_CONFIG_UNITY'
 ])
+# Desktop GL is not available on Android; Vulkan is used there instead.
+if rive_env["platform"] != "android":
+    rive_env.Append(CPPDEFINES=['RIVE_DESKTOP_GL'])
+else:
+    # Required to activate GLES3 headers in gles3.hpp (and related renderer files).
+    rive_env.Append(CPPDEFINES=['RIVE_ANDROID'])
 
 # Suppress warnings for third-party dependencies
 if rive_env["platform"] != "windows":
     rive_env.Append(CCFLAGS=['-Wno-unused-function', '-Wno-error=unused-function', '-Wno-macro-redefined'])
 
-# Force include unistd.h for zlib on macOS to fix implicit function declaration errors
-if rive_env["platform"] == "macos":
+# Force include unistd.h for zlib on macOS/Android to fix implicit function declaration errors
+# (lseek and friends are POSIX; C99/C11 strict mode requires explicit inclusion of <unistd.h>)
+if rive_env["platform"] in ["macos", "android"]:
     rive_env.Append(CCFLAGS=['-include', 'unistd.h'])
 
 # Force include rive_harfbuzz_renames.h
@@ -235,12 +242,20 @@ elif rive_env["platform"] in ["windows", "linuxbsd", "android"]:
     # Pick up VULKAN_SDK headers on Windows + Linux (LunarG ships modern Vulkan headers
     # the system packages may be too old for, e.g. VK_ARM_format_pack added in 1.4.318).
     vulkan_sdk = os.environ.get("VULKAN_SDK")
-    if vulkan_sdk and rive_env["platform"] in ["windows", "linuxbsd"]:
+    if vulkan_sdk and rive_env["platform"] in ["windows", "linuxbsd", "android"]:
         # LunarG SDK uses 'Include' on Windows, 'include' on Linux.
         for inc_name in ("Include", "include"):
             inc_dir = os.path.join(vulkan_sdk, inc_name)
             if os.path.isdir(inc_dir):
-                rive_env.Prepend(CPPPATH=[inc_dir, os.path.join(inc_dir, "vma")])
+                if rive_env["platform"] == "android":
+                    # Use -isystem so Clang treats these as system headers and suppresses
+                    # third-party warnings (e.g. VMA's -Wnullability-completeness).
+                    rive_env.Append(CCFLAGS=[
+                        "-isystem", inc_dir,
+                        "-isystem", os.path.join(inc_dir, "vma"),
+                    ])
+                else:
+                    rive_env.Prepend(CPPPATH=[inc_dir, os.path.join(inc_dir, "vma")])
                 break
         for lib_name in ("Lib", "lib"):
             lib_dir = os.path.join(vulkan_sdk, lib_name)
@@ -315,6 +330,12 @@ for d in dirs_to_scan:
                 if f == "load_gles_extensions.cpp" and rive_env["platform"] != "android":
                     continue
                 
+                # pls_impl_webgl.cpp uses ANGLE/WebGL extensions that don't exist on
+                # any native platform (Android, desktop, etc.).  It is only valid for
+                # Emscripten / WebGL builds which this project does not support.
+                if f == "pls_impl_webgl.cpp":
+                    continue
+                
                 rive_sources.append(os.path.join(root, f))
 
 
@@ -339,9 +360,12 @@ if rive_env["platform"] == "macos":
         filtered_sources.append(s)
     rive_sources = filtered_sources
 
-rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "glad_custom.c"))
-rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "src", "gles2.c"))
-rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "src", "egl.c"))
+# Glad GL loader is only needed on desktop (Windows/Linux/macOS).
+# Android uses the NDK's system GLES3 headers directly, loaded via eglGetProcAddress.
+if rive_env["platform"] != "android":
+    rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "glad_custom.c"))
+    rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "src", "gles2.c"))
+    rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "src", "egl.c"))
 
 # Add HarfBuzz and SheenBidi sources
 harfbuzz_sources = glob(os.path.join(harfbuzz_dir, "src", "*.cc"))
