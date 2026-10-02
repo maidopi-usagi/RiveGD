@@ -1,43 +1,118 @@
-name: Build & Release
+name: Build, Test & Release
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - ".gitattributes"
+      - "SConstruct"
+      - "scripts/**"
+      - "src/**"
+      - "third-party/SConscript.rive"
+      - "third-party/godot-cpp"
+      - "third-party/rive-runtime"
+      - ".gitmodules"
+      - "project/addons/godot-rive/godot-rive.gdextension"
   release:
     types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: "Optional tag to attach artifacts to (must already exist as a release). Leave blank for artifact-only run."
+        description: "Optional existing release tag to attach the package to; blank means artifact only."
         required: false
         default: ""
       platforms:
-        description: "Which platforms to build (comma-separated subset of: macos,windows,linux,android). Default: all."
+        description: "Comma-separated subset of macos,windows,linux,android; use all for every platform."
         required: false
         default: "all"
 
 jobs:
   setup:
     name: Resolve build matrix
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     outputs:
-      matrix: ${{ steps.gen.outputs.matrix }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      package_label: ${{ steps.matrix.outputs.package_label }}
+      full_matrix: ${{ steps.matrix.outputs.full_matrix }}
+      has_linux: ${{ steps.matrix.outputs.has_linux }}
     steps:
-      - id: gen
+      - id: matrix
+        name: Validate inputs
         shell: bash
         env:
           PLATFORMS: ${{ github.event_name == 'workflow_dispatch' && inputs.platforms || 'all' }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
         run: |
-          all='[
-            {"name":"macos-universal","runner":"macos-14","platform":"macos","shader_platform":"macos","arch":"universal"},
-            {"name":"windows-x86_64","runner":"windows-2022","platform":"windows","shader_platform":"windows","arch":"x86_64"},
-            {"name":"linux-x86_64","runner":"ubuntu-22.04","platform":"linux","shader_platform":"linuxbsd","arch":"x86_64"},
-            {"name":"android-arm64","runner":"ubuntu-22.04","platform":"android","shader_platform":"linuxbsd","arch":"arm64"}
-          ]'
-          if [ "$PLATFORMS" = "all" ]; then
-            filtered="$all"
-          else
-            filtered=$(echo "$all" | python3 -c "import json,sys,os; sel=set(s.strip() for s in os.environ['PLATFORMS'].split(',') if s.strip()); print(json.dumps([c for c in json.load(sys.stdin) if c['platform'] in sel]))")
-          fi
-          echo "matrix=$(echo "$filtered" | tr -d '\n' | tr -s ' ')" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          import re
+
+          configurations = [
+              {
+                  "name": "macos-universal",
+                  "runner": "macos-14",
+                  "platform": "macos",
+                  "shader_platform": "macos",
+                  "arch": "universal",
+              },
+              {
+                  "name": "windows-x86_64",
+                  "runner": "windows-2022",
+                  "platform": "windows",
+                  "shader_platform": "windows",
+                  "arch": "x86_64",
+              },
+              {
+                  "name": "linux-x86_64",
+                  "runner": "ubuntu-22.04",
+                  "platform": "linux",
+                  "shader_platform": "linux",
+                  "arch": "x86_64",
+              },
+              {
+                  "name": "android-arm64",
+                  "runner": "ubuntu-22.04",
+                  "platform": "android",
+                  "shader_platform": "android",
+                  "arch": "arm64",
+              },
+          ]
+
+          requested = os.environ.get("PLATFORMS", "all").strip()
+          available = {configuration["platform"] for configuration in configurations}
+          selected = available
+          if requested != "all":
+              selected = {item.strip() for item in requested.split(",") if item.strip()}
+              unknown = selected - available
+              if unknown:
+                  raise SystemExit(f"Unknown platforms: {', '.join(sorted(unknown))}")
+              if not selected:
+                  raise SystemExit("At least one platform must be selected")
+              configurations = [
+                  configuration
+                  for configuration in configurations
+                  if configuration["platform"] in selected
+              ]
+
+          raw_release_tag = os.environ.get("RELEASE_TAG", "")
+          release_tag = raw_release_tag.strip()
+          if raw_release_tag and not release_tag:
+              raise SystemExit("The release tag cannot contain only whitespace")
+          if release_tag and selected != available:
+              raise SystemExit("A release package must include all supported platforms")
+
+          label = release_tag or os.environ["GITHUB_SHA"][:12]
+          label = re.sub(r"[^0-9A-Za-z._-]+", "-", label).strip("-.")
+          if not label:
+              raise SystemExit("The package label is empty after sanitization")
+
+          print("matrix=" + json.dumps(configurations, separators=(",", ":")))
+          print("package_label=" + label)
+          print("full_matrix=" + str(selected == available).lower())
+          print("has_linux=" + str("linux" in selected).lower())
+          PY
 
   build:
     name: ${{ matrix.config.name }} (${{ matrix.target }})
@@ -51,75 +126,100 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           submodules: recursive
           fetch-depth: 1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
-      - name: Install SCons
-        run: python -m pip install --upgrade pip scons ply
+      - name: Install pinned Python build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          requirements="$RUNNER_TEMP/rivegd-build-requirements.txt"
+          printf '%s\n' \
+            'scons==4.10.1 --hash=sha256:bd9d1c52f908d874eba92a8c0c0a8dcf2ed9f3b88ab956d0fce1da479c4e7126' \
+            'ply==3.11 --hash=sha256:096f9b8350b65ebd2fd1346b12452efe5b9607f7482813ffca50c22722a807ce' \
+            > "$requirements"
+          python -m pip install \
+            --disable-pip-version-check \
+            --no-deps \
+            --only-binary=:all: \
+            --require-hashes \
+            --requirement "$requirements"
 
-      # Linux deps: OpenGL / X11 headers + glslang/spirv-tools for Rive shader build.
-      - name: Install Linux build deps
+      - name: Install Linux build dependencies
         if: matrix.config.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libgl1-mesa-dev libx11-dev libxrandr-dev libxcursor-dev libxinerama-dev libxi-dev glslang-tools spirv-tools
+          sudo apt-get install --no-install-recommends -y \
+            build-essential \
+            glslang-tools \
+            libgl1-mesa-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxrandr-dev \
+            spirv-tools
 
-      # Android: install shader tools.
-      - name: Install Android build deps
+      - name: Install Android shader tools
         if: matrix.config.platform == 'android'
         run: |
           sudo apt-get update
-          sudo apt-get install -y glslang-tools spirv-tools
+          sudo apt-get install --no-install-recommends -y glslang-tools spirv-tools
 
-      # Verify the pre-installed NDK toolchain is usable.
-      - name: Verify Android NDK toolchain
+      - name: Install and verify Android NDK 28
         if: matrix.config.platform == 'android'
         shell: bash
+        env:
+          NDK_VERSION: 28.1.13356709
         run: |
-          echo "ANDROID_NDK_ROOT=${ANDROID_NDK_ROOT}"
-          ls "${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin/" | head -5
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$sdk_root"
+          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$sdkmanager"
+          "$sdkmanager" --sdk_root="$sdk_root" --install "ndk;$NDK_VERSION"
+          ndk_root="$sdk_root/ndk/$NDK_VERSION"
+          test -x "$ndk_root/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++"
+          echo "ANDROID_HOME=$sdk_root" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ndk_root" >> "$GITHUB_ENV"
+          echo "RIVEGD_NDK_VERSION=$NDK_VERSION" >> "$GITHUB_ENV"
 
-      # Fetch modern Vulkan headers (NDK sysroot lacks VK_ARM_format_pack added in 1.4.318)
-      # and VulkanMemoryAllocator. Expose them as a synthetic VULKAN_SDK so SConscript.rive
-      # prepends them to CPPPATH, overriding the NDK's stale vulkan_core.h.
-      - name: Fetch Vulkan headers and VMA for Android
+      - name: Install pinned Vulkan headers for Android
         if: matrix.config.platform == 'android'
         shell: bash
+        env:
+          VULKAN_HEADERS_VERSION: 1.4.321
+          VULKAN_HEADERS_SHA256: 7c1874f9186d9e7d5245e279cdccaa77a66ed8f52871b428630aeb771dc7623c
         run: |
-          ANDROID_VULKAN_SDK="$RUNNER_TEMP/android-vulkan-sdk"
-          mkdir -p "${ANDROID_VULKAN_SDK}/include"
-          # Vulkan-Headers 1.4.321 (adds VK_ARM_format_pack enums missing from NDK sysroot)
-          curl -fsSL "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.4.321.tar.gz" \
-            -o "$RUNNER_TEMP/vulkan-headers.tar.gz"
-          tar -xzf "$RUNNER_TEMP/vulkan-headers.tar.gz" -C "$RUNNER_TEMP"
-          cp -r "$RUNNER_TEMP/Vulkan-Headers-1.4.321/include/"* "${ANDROID_VULKAN_SDK}/include/"
-          # VulkanMemoryAllocator (header-only)
-          curl -fsSL -o "${ANDROID_VULKAN_SDK}/include/vk_mem_alloc.h" \
-            "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/v3.1.0/include/vk_mem_alloc.h"
-          mkdir -p "${ANDROID_VULKAN_SDK}/include/vma"
-          cp "${ANDROID_VULKAN_SDK}/include/vk_mem_alloc.h" "${ANDROID_VULKAN_SDK}/include/vma/"
-          echo "VULKAN_SDK=${ANDROID_VULKAN_SDK}" >> "$GITHUB_ENV"
-          echo "Android Vulkan SDK ready:"
-          ls "${ANDROID_VULKAN_SDK}/include/"
+          set -euo pipefail
+          android_vulkan_sdk="$RUNNER_TEMP/android-vulkan-sdk"
+          archive="$RUNNER_TEMP/vulkan-headers.tar.gz"
+          curl --fail --location --show-error --silent \
+            --output "$archive" \
+            "https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/refs/tags/v$VULKAN_HEADERS_VERSION"
+          echo "$VULKAN_HEADERS_SHA256  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP"
+          mkdir -p "$android_vulkan_sdk/include"
+          cp -R "$RUNNER_TEMP/Vulkan-Headers-$VULKAN_HEADERS_VERSION/include/." "$android_vulkan_sdk/include/"
+          test -s "$android_vulkan_sdk/include/vulkan/vulkan.h"
+          echo "VULKAN_SDK=$android_vulkan_sdk" >> "$GITHUB_ENV"
 
-      # Windows: enable MSVC + ensure fxc.exe (Windows SDK) is on PATH for shader build.
-      - name: Setup MSVC
+      - name: Set up MSVC
         if: matrix.config.platform == 'windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: x64
 
-      # Vulkan SDK on Windows/Linux (Rive needs Vulkan headers >= 1.4.318 for VK_ARM_format_pack).
       - name: Install Vulkan SDK
         if: matrix.config.platform == 'windows' || matrix.config.platform == 'linux'
-        uses: jakoch/install-vulkan-sdk-action@v1
+        uses: jakoch/install-vulkan-sdk-action@37effcfa045411f8bfbbda26df2fd1b3bf3436fa # v1
         with:
           vulkan_version: 1.4.321.1
           install_runtime: false
@@ -130,115 +230,374 @@ jobs:
         if: matrix.config.platform == 'windows' || matrix.config.platform == 'linux'
         shell: bash
         run: |
-          echo "VULKAN_SDK=$VULKAN_SDK"
-          ls "$VULKAN_SDK/Include/vulkan/vulkan.h" 2>/dev/null || ls "$VULKAN_SDK/include/vulkan/vulkan.h"
+          set -euo pipefail
+          test -n "${VULKAN_SDK:-}"
+          if test -f "$VULKAN_SDK/Include/vulkan/vulkan.h"; then
+            test -s "$VULKAN_SDK/Include/vulkan/vulkan.h"
+          else
+            test -s "$VULKAN_SDK/include/vulkan/vulkan.h"
+          fi
 
-      # Vulkan Memory Allocator (header-only) — Rive's vulkan backend includes vk_mem_alloc.h.
-      - name: Fetch VulkanMemoryAllocator
-        if: matrix.config.platform == 'windows' || matrix.config.platform == 'linux'
+      - name: Install pinned Vulkan Memory Allocator header
+        if: matrix.config.platform == 'windows' || matrix.config.platform == 'linux' || matrix.config.platform == 'android'
         shell: bash
+        env:
+          VMA_COMMIT: 1d8f600fd424278486eade7ed3e877c99f0846b1
+          VMA_SHA256: 90ce12fc4a2466235a09ae02905dd0c13aee80c1bbf11b331ab61230c2ceb112
         run: |
-          mkdir -p "$RUNNER_TEMP/vma/include/vma"
-          curl -fsSL -o "$RUNNER_TEMP/vma/include/vk_mem_alloc.h" \
-            https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/v3.1.0/include/vk_mem_alloc.h
-          cp "$RUNNER_TEMP/vma/include/vk_mem_alloc.h" "$RUNNER_TEMP/vma/include/vma/vk_mem_alloc.h"
-          # Place the header inside the SDK's include directory so SConscript.rive picks it up.
-          # Windows uses 'Include', Linux uses 'include'.
-          for inc in "$VULKAN_SDK/Include" "$VULKAN_SDK/include"; do
-            if [ -d "$inc" ]; then
-              mkdir -p "$inc/vma"
-              cp "$RUNNER_TEMP/vma/include/vk_mem_alloc.h" "$inc/vk_mem_alloc.h"
-              cp "$RUNNER_TEMP/vma/include/vk_mem_alloc.h" "$inc/vma/vk_mem_alloc.h"
-              ls "$inc/vk_mem_alloc.h"
+          set -euo pipefail
+          vma_header="$RUNNER_TEMP/vk_mem_alloc.h"
+          curl --fail --location --show-error --silent \
+            --output "$vma_header" \
+            "https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/$VMA_COMMIT/include/vk_mem_alloc.h"
+          echo "$VMA_SHA256  $vma_header" | sha256sum --check --strict
+          installed=false
+          for include_dir in "$VULKAN_SDK/Include" "$VULKAN_SDK/include"; do
+            if test -d "$include_dir"; then
+              mkdir -p "$include_dir/vma"
+              cp "$vma_header" "$include_dir/vk_mem_alloc.h"
+              cp "$vma_header" "$include_dir/vma/vk_mem_alloc.h"
+              installed=true
             fi
           done
+          test "$installed" = true
 
-      # DirectX-Headers (provides d3dx12.h) for the Rive D3D12 renderer.
-      - name: Fetch DirectX-Headers (Windows)
+      - name: Install pinned DirectX-Headers
         if: matrix.config.platform == 'windows'
         shell: bash
+        env:
+          DX_HEADERS_COMMIT: 27d63115c1037d0e4e119085f34345bd9ecf7ada
+          DX_HEADERS_SHA256: 9dab2a33b3c32c9a8dd34a0886e95abfae3e49eba6f5920a3f1637a8e278f69c
         run: |
-          git clone --depth 1 --branch v1.614.0 https://github.com/microsoft/DirectX-Headers.git "$RUNNER_TEMP/DirectX-Headers"
-          echo "DIRECTX_HEADERS_PATH=$RUNNER_TEMP/DirectX-Headers" >> "$GITHUB_ENV"
+          set -euo pipefail
+          archive="$RUNNER_TEMP/directx-headers.zip"
+          curl --fail --location --show-error --silent \
+            --output "$archive" \
+            "https://codeload.github.com/microsoft/DirectX-Headers/zip/$DX_HEADERS_COMMIT"
+          echo "$DX_HEADERS_SHA256  $archive" | sha256sum --check --strict
+          python -m zipfile -e "$archive" "$RUNNER_TEMP/directx-headers"
+          headers_path="$RUNNER_TEMP/directx-headers/DirectX-Headers-$DX_HEADERS_COMMIT"
+          test -s "$headers_path/include/directx/d3dx12.h"
+          echo "DIRECTX_HEADERS_PATH=$headers_path" >> "$GITHUB_ENV"
 
       - name: Generate Rive shaders
         shell: bash
         run: |
-          python3 scripts/build_shaders.py \
+          set -euo pipefail
+          pycmd=python
+          if command -v python3 >/dev/null 2>&1; then pycmd=python3; fi
+          "$pycmd" scripts/build_shaders.py \
             third-party/rive-runtime/renderer/src/shaders \
             third-party/rive-runtime/renderer/include/generated/shaders \
-            ${{ matrix.config.shader_platform }}
+            "${{ matrix.config.shader_platform }}"
 
       - name: Build
         shell: bash
         run: |
-          # For Android: detect the installed NDK version dynamically and pass it
-          # to scons so godot-cpp doesn't use its hardcoded default (28.1.x).
-          if [ "${{ matrix.config.platform }}" = "android" ]; then
-            NDK_VER=$(ls "${ANDROID_SDK_ROOT}/ndk/" | sort -V | tail -1)
-            echo "Using NDK version: ${NDK_VER}"
-            scons platform=${{ matrix.config.platform }} target=${{ matrix.target }} arch=${{ matrix.config.arch }} ndk_version="${NDK_VER}" -j$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
-          else
-            scons platform=${{ matrix.config.platform }} target=${{ matrix.target }} arch=${{ matrix.config.arch }} -j$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+          set -euo pipefail
+          jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
+          options=()
+          if test "${{ matrix.config.platform }}" = android; then
+            test -n "$RIVEGD_NDK_VERSION"
+            options+=("ndk_version=$RIVEGD_NDK_VERSION")
           fi
+          scons \
+            platform="${{ matrix.config.platform }}" \
+            target="${{ matrix.target }}" \
+            arch="${{ matrix.config.arch }}" \
+            "${options[@]}" \
+            -j"$jobs"
 
-      - name: Stage artifacts
+      - name: Stage and validate exact artifact
         shell: bash
+        env:
+          PLATFORM: ${{ matrix.config.platform }}
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.config.arch }}
         run: |
-          mkdir -p staged/addons/godot-rive/bin
-          cp -R project/addons/godot-rive/godot-rive.gdextension staged/addons/godot-rive/ || true
-          cp -R project/addons/godot-rive/godot-rive.gdextension.uid staged/addons/godot-rive/ 2>/dev/null || true
-          # Copy whatever the build produced for this platform/target.
-          cp -R project/addons/godot-rive/bin/* staged/addons/godot-rive/bin/ || true
-          ls -R staged
+          set -euo pipefail
+          addon_source="project/addons/godot-rive"
+          addon_stage="staged/addons/godot-rive"
+          configuration=debug
+          if test "$TARGET" = template_release; then configuration=release; fi
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+          case "$PLATFORM" in
+            linux)
+              descriptor_key="linux.$configuration.x86_64"
+              artifact="bin/libgodot-rive.linux.$configuration.x86_64.so"
+              ;;
+            windows)
+              descriptor_key="windows.$configuration.x86_64"
+              artifact="bin/libgodot-rive.windows.$configuration.x86_64.dll"
+              ;;
+            macos)
+              descriptor_key="macos.$configuration"
+              artifact="bin/libgodot-rive.macos.$configuration.framework"
+              ;;
+            android)
+              descriptor_key="android.$configuration.arm64"
+              artifact="bin/libgodot-rive.android.$configuration.arm64.so"
+              ;;
+            *)
+              echo "Unsupported platform: $PLATFORM" >&2
+              exit 1
+              ;;
+          esac
+
+          test -e "$addon_source/$artifact"
+          if test "$PLATFORM" = macos; then
+            framework_binary="$addon_source/$artifact/libgodot-rive.macos.$configuration"
+            test -s "$framework_binary"
+            file "$framework_binary" | grep -q "Mach-O"
+          else
+            test -s "$addon_source/$artifact"
+          fi
+          if test "$PLATFORM" = android; then
+            ELF_ARTIFACT="$addon_source/$artifact" python - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
+
+          readelf = Path(os.environ["ANDROID_NDK_ROOT"]) / "toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          output = subprocess.check_output(
+              [str(readelf), "--program-headers", "--wide", os.environ["ELF_ARTIFACT"]],
+              text=True,
+          )
+          loads = [line.split() for line in output.splitlines() if line.strip().startswith("LOAD ")]
+          if not loads:
+              raise SystemExit("The Android binary has no ELF LOAD segments")
+          for load in loads:
+              alignment = int(load[-1], 0)
+              if alignment < 16384:
+                  raise SystemExit(f"Android LOAD segment alignment is below 16 KB: {alignment}")
+          print("Android ELF LOAD segments satisfy 16 KB page alignment")
+          PY
+          fi
+          test -s "$addon_source/godot-rive.gdextension"
+          test -s "$addon_source/godot-rive.gdextension.uid"
+          mkdir -p "$addon_stage/bin"
+          cp "$addon_source/godot-rive.gdextension" "$addon_stage/"
+          cp "$addon_source/godot-rive.gdextension.uid" "$addon_stage/"
+          cp -R "$addon_source/$artifact" "$addon_stage/bin/"
+          printf '%s\n' "$artifact" > "$addon_stage/artifact-manifest.txt"
+
+          DESCRIPTOR_KEY="$descriptor_key" ARTIFACT="$artifact" python - <<'PY'
+          import configparser
+          import os
+          from pathlib import Path
+
+          addon = Path("staged/addons/godot-rive")
+          parser = configparser.ConfigParser(interpolation=None)
+          loaded = parser.read(addon / "godot-rive.gdextension", encoding="utf-8")
+          if not loaded:
+              raise SystemExit("Could not read the staged GDExtension descriptor")
+          key = os.environ["DESCRIPTOR_KEY"]
+          expected = os.environ["ARTIFACT"]
+          actual = parser["libraries"].get(key, "").strip().strip('"')
+          if actual != expected:
+              raise SystemExit(f"Descriptor {key!r} maps to {actual!r}, expected {expected!r}")
+          if not (addon / actual).exists():
+              raise SystemExit(f"Descriptor target is missing: {actual}")
+          PY
+
+      - name: Upload platform artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: godot-rive-${{ matrix.config.name }}-${{ matrix.target }}
-          path: staged/**
+          path: staged
           if-no-files-found: error
           retention-days: 14
 
-  package:
-    name: Package & attach to release
-    needs: build
+  smoke-linux:
+    name: Linux Vulkan smoke (Godot ${{ matrix.godot_version }})
+    needs: [setup, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.setup.outputs.has_linux == 'true' }}
     runs-on: ubuntu-22.04
-    if: always() && needs.build.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - godot_version: "4.5"
+            archive_sha512: b5bd5d8a4dd3f44de1d123361beabaafa4825dd05b5e20fd2bfa540f32594f81d82e7c4e86fae420f4faee77d9def573b570f8b156e9c84a4dc2d5123d09e852
+          - godot_version: "4.6"
+            archive_sha512: 0c1bc5e8dca8f892a9a5fd0628b742f399fbd520e5f0051ecac021c0aa4ea5a8f0d237c8ed6b767b2afda7f7a4b32001118f1b04a82e335a5e35b947a1217940
+    steps:
+      - name: Download Linux debug artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: godot-rive-linux-x86_64-template_debug
+          path: smoke-project
+
+      - name: Install smoke-test dependencies
+        run: |
+          sudo apt-get update
+          audio_package=libasound2
+          if apt-cache show libasound2t64 >/dev/null 2>&1; then
+            audio_package=libasound2t64
+          fi
+          sudo apt-get install --no-install-recommends -y \
+            "$audio_package" \
+            libfontconfig1 \
+            libgl1 \
+            libx11-6 \
+            libxcursor1 \
+            libxi6 \
+            libxinerama1 \
+            libxrandr2 \
+            mesa-vulkan-drivers \
+            unzip \
+            xauth \
+            xvfb
+
+      - name: Download and verify Godot
+        shell: bash
+        env:
+          GODOT_VERSION: ${{ matrix.godot_version }}
+          GODOT_SHA512: ${{ matrix.archive_sha512 }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/godot.zip"
+          curl --fail --location --show-error --silent \
+            --output "$archive" \
+            "https://github.com/godotengine/godot-builds/releases/download/$GODOT_VERSION-stable/Godot_v$GODOT_VERSION-stable_linux.x86_64.zip"
+          echo "$GODOT_SHA512  $archive" | sha512sum --check --strict
+          mkdir -p "$RUNNER_TEMP/godot"
+          unzip -q "$archive" -d "$RUNNER_TEMP/godot"
+          godot="$RUNNER_TEMP/godot/Godot_v$GODOT_VERSION-stable_linux.x86_64"
+          chmod +x "$godot"
+          echo "GODOT_BIN=$godot" >> "$GITHUB_ENV"
+
+      - name: Load extension with Vulkan
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s smoke-project/addons/godot-rive/bin/libgodot-rive.linux.debug.x86_64.so
+          mkdir -p smoke-project/.godot
+          printf '%s\n' \
+            'config_version=5' \
+            '' \
+            '[application]' \
+            'config/name="RiveGD smoke"' \
+            '' \
+            '[rendering]' \
+            'renderer/rendering_method="mobile"' \
+            'renderer/rendering_method.mobile="mobile"' \
+            > smoke-project/project.godot
+          printf '%s\n' 'res://addons/godot-rive/godot-rive.gdextension' \
+            > smoke-project/.godot/extension_list.cfg
+
+          set +e
+          timeout 60s xvfb-run --auto-servernum "$GODOT_BIN" \
+            --display-driver x11 \
+            --editor \
+            --path smoke-project \
+            --quit-after 2 \
+            --rendering-method mobile \
+            --rendering-driver vulkan \
+            --verbose \
+            > godot-smoke.log 2>&1
+          status=$?
+          set -e
+          cat godot-smoke.log
+          test "$status" -eq 0
+          grep -F "Rive renderer initialized." godot-smoke.log
+          if grep -E \
+            "Cannot open dynamic library|GDExtension.*(failed|error)|Rive renderer initialization failed|Rive: Vulkan support not compiled in" \
+            godot-smoke.log; then
+            exit 1
+          fi
+
+  package:
+    name: Validate and package addon
+    needs: [setup, build, smoke-linux]
+    if: ${{ !cancelled() && needs.setup.outputs.full_matrix == 'true' && needs.build.result == 'success' && (needs.smoke-linux.result == 'success' || needs.smoke-linux.result == 'skipped') }}
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          fetch-depth: 1
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
+          pattern: godot-rive-*-template_*
           path: dist
 
-      - name: Merge artifacts into a single addon tree
+      - name: Merge exact binaries and validate descriptor
+        shell: bash
+        env:
+          PACKAGE_LABEL: ${{ needs.setup.outputs.package_label }}
         run: |
-          set -e
-          mkdir -p package/addons/godot-rive/bin
-          # Each artifact already has the addon layout; merge them.
-          for d in dist/*/addons/godot-rive; do
-            cp -R "$d/." package/addons/godot-rive/
-          done
-          ls -R package
-          (cd package && zip -r ../godot-rive-${{ github.ref_name }}.zip addons)
-          ls -lh godot-rive-*.zip
+          set -euo pipefail
+          addon="package/addons/godot-rive"
+          mkdir -p "$addon/bin"
+          shopt -s nullglob
+          sources=(dist/*/addons/godot-rive)
+          test "${#sources[@]}" -gt 0
 
-      - name: Upload merged zip artifact
-        uses: actions/upload-artifact@v4
+          cp "${sources[0]}/godot-rive.gdextension" "$addon/"
+          cp "${sources[0]}/godot-rive.gdextension.uid" "$addon/"
+          for source in "${sources[@]}"; do
+            cmp "$source/godot-rive.gdextension" "$addon/godot-rive.gdextension"
+            cmp "$source/godot-rive.gdextension.uid" "$addon/godot-rive.gdextension.uid"
+            test -s "$source/artifact-manifest.txt"
+            IFS= read -r artifact < "$source/artifact-manifest.txt"
+            case "$artifact" in
+              bin/*) ;;
+              *) echo "Invalid artifact manifest path: $artifact" >&2; exit 1 ;;
+            esac
+            entry="$source/$artifact"
+            destination="$addon/$artifact"
+            test -e "$entry"
+            test ! -e "$destination"
+            cp -R "$entry" "$destination"
+          done
+
+          python - <<'PY'
+          import configparser
+          from pathlib import Path
+
+          addon = Path("package/addons/godot-rive")
+          parser = configparser.ConfigParser(interpolation=None)
+          parser.read(addon / "godot-rive.gdextension", encoding="utf-8")
+          expected = set()
+          for key, quoted_path in parser["libraries"].items():
+              path = quoted_path.strip().strip('"')
+              target = addon / path
+              if not target.exists():
+                  raise SystemExit(f"Missing descriptor target for {key}: {path}")
+              expected.add(Path(path).name)
+          actual = {path.name for path in (addon / "bin").iterdir()}
+          if actual != expected:
+              raise SystemExit(
+                  f"Packaged bin entries differ from descriptor: "
+                  f"missing={sorted(expected - actual)}, extra={sorted(actual - expected)}"
+              )
+          PY
+
+          archive="godot-rive-$PACKAGE_LABEL.zip"
+          (cd package && zip -q -r "../$archive" addons)
+          test -s "$archive"
+
+      - name: Upload merged package
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: godot-rive-addon-zip
-          path: godot-rive-*.zip
+          name: godot-rive-addon-${{ needs.setup.outputs.package_label }}
+          path: godot-rive-${{ needs.setup.outputs.package_label }}.zip
+          if-no-files-found: error
           retention-days: 30
 
-      - name: Attach to GitHub Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
+      - name: Verify manual release tag exists
+        if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null
+
+      - name: Attach package to GitHub Release
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          files: godot-rive-*.zip
+          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+          files: godot-rive-${{ needs.setup.outputs.package_label }}.zip
+          fail_on_unmatched_files: true

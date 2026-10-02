@@ -32,6 +32,7 @@ protected:
     static void _bind_methods();
 
 public:
+    virtual ~RiveViewModelProperty();
     virtual String get_property_name() const = 0;
 };
 
@@ -162,6 +163,7 @@ protected:
     static void _bind_methods();
 
 public:
+    ~RiveViewModelInstance();
     void _init(rive::rcp<rive::ViewModelInstance> p_instance);
     
     Ref<RiveViewModelNumber> get_number_property(const String& p_path);

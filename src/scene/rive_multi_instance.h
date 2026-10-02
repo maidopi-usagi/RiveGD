@@ -17,6 +17,9 @@ private:
     std::unique_ptr<rive::ArtboardInstance> artboard;
     std::unique_ptr<rive::StateMachineInstance> state_machine;
     std::unique_ptr<rive::LinearAnimationInstance> animation;
+    rive::rcp<rive::File> retained_file;
+
+    void _release_playable_on_render_thread();
     
     String artboard_name;
     String state_machine_name;
@@ -32,7 +35,8 @@ private:
     // Let's use Transform2D array for maximum flexibility.
     Array transforms; 
 
-    void _load_artboard();
+    bool _load_artboard();
+    void _on_rive_file_changed();
 
 protected:
     static void _bind_methods();

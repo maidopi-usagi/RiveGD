@@ -15,9 +15,10 @@
 // Custom Drawable to render SVG shapes
 class RiveSVGDrawable : public rive::Drawable {
 public:
-    // Use raw pointer to avoid Ref counting issues. 
-    // Data is owned by RiveSVG which owns the Artboard containing this Drawable.
-    RiveSVG::Data* data = nullptr;
+    // Instances can outlive the RiveFile resource that created them (for
+    // example during a failed hot reload), so the drawable keeps its shape
+    // data alive explicitly.
+    Ref<RiveSVG::Data> data;
 
     RiveSVGDrawable() {}
 
@@ -45,7 +46,7 @@ public:
     }
 
     void draw(rive::Renderer* renderer) override {
-        if (!data) return;
+        if (data.is_null()) return;
         
         for (int i = 0; i < data->shapes.size(); i++) {
             const RiveSVG::Shape& s = data->shapes[i];
@@ -230,7 +231,7 @@ void RiveSVG::parse(String xml_content) {
     source_artboard->parentId(source_artboard->emptyId);
     
     auto drawable = new RiveSVGDrawable();
-    drawable->data = data.ptr();
+    drawable->data = data;
     
     // Use ArtboardImporter to add object to private list
     rive::ArtboardImporter importer(source_artboard.get());

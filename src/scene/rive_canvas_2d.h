@@ -3,6 +3,7 @@
 
 #include <godot_cpp/classes/node2d.hpp>
 #include <godot_cpp/classes/texture2drd.hpp>
+#include <godot_cpp/core/object_id.hpp>
 #include <godot_cpp/templates/local_vector.hpp>
 #include "../renderer/rive_render_registry.h"
 #include "../renderer/rive_texture_target.h"
@@ -20,7 +21,9 @@ private:
     Rect2 cull_rect = Rect2(0, 0, 0, 0); // empty = use (0,0,size,size)
     bool cull_enabled = true;
 
-    LocalVector<RiveNode*> active_nodes;
+    // Resolve descendants by ObjectID at every use. Script callbacks can free
+    // their own node or a later sibling while a custom draw is in progress.
+    LocalVector<ObjectID> active_nodes;
     // Per active node, the cumulative xform from this canvas down to (but
     // excluding) the node itself — i.e. canvas->parent_of_node. Same length
     // and order as active_nodes.
@@ -32,6 +35,7 @@ private:
     // RiveCanvas2D (which manages its own subtree). Pushes the parent's
     // cumulative transform (relative to this canvas) for each collected node.
     void _collect_descendants(Node *parent, const Transform2D &parent_xform_in_canvas);
+    RiveNode *_resolve_active_node(uint32_t p_index) const;
 
 protected:
     static void _bind_methods();

@@ -5,10 +5,14 @@
 #include <godot_cpp/classes/rd_texture_view.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/templates/local_vector.hpp>
+#include <memory>
+#include <vector>
 
 #if defined(VULKAN_ENABLED)
 
+#ifndef VK_NO_PROTOTYPES
 #define VK_NO_PROTOTYPES
+#endif
 #include <vulkan/vulkan.h>
 #include "rive/renderer/vulkan/render_context_vulkan_impl.hpp"
 #include "rive/renderer/vulkan/render_target_vulkan.hpp"
@@ -67,6 +71,7 @@ struct VulkanFuncs {
     PFN_vkGetDeviceQueue vkGetDeviceQueue = nullptr;
     PFN_vkCreateCommandPool vkCreateCommandPool = nullptr;
     PFN_vkAllocateCommandBuffers vkAllocateCommandBuffers = nullptr;
+    PFN_vkResetCommandBuffer vkResetCommandBuffer = nullptr;
     PFN_vkBeginCommandBuffer vkBeginCommandBuffer = nullptr;
     PFN_vkEndCommandBuffer vkEndCommandBuffer = nullptr;
     PFN_vkQueueSubmit vkQueueSubmit = nullptr;
@@ -81,6 +86,7 @@ struct VulkanFuncs {
 struct FrameResources {
     VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
+    uint64_t frameNumber = 0;
 };
 
 struct RiveVulkanState {
@@ -89,12 +95,48 @@ struct RiveVulkanState {
     VkQueue queue = VK_NULL_HANDLE;
     std::vector<FrameResources> frames;
     uint32_t currentFrame = 0;
+    uint64_t nextFrameNumber = 0;
 };
 
 static RiveVulkanState* g_vk_state = nullptr;
 
+void cleanup_vulkan_context();
+
+static bool has_required_vulkan_functions() {
+    return g_vk.vkGetPhysicalDeviceFeatures &&
+           g_vk.vkGetPhysicalDeviceQueueFamilyProperties &&
+           g_vk.vkGetDeviceQueue && g_vk.vkCreateCommandPool &&
+           g_vk.vkAllocateCommandBuffers && g_vk.vkResetCommandBuffer &&
+           g_vk.vkBeginCommandBuffer &&
+           g_vk.vkEndCommandBuffer && g_vk.vkQueueSubmit &&
+           g_vk.vkDestroyCommandPool && g_vk.vkCreateFence &&
+           g_vk.vkWaitForFences && g_vk.vkResetFences &&
+           g_vk.vkDestroyFence;
+}
+
+static void destroy_vulkan_state(RiveVulkanState* state) {
+    if (!state) return;
+    if (state->device) {
+        if (state->queue != VK_NULL_HANDLE && g_vk.vkQueueWaitIdle) {
+            g_vk.vkQueueWaitIdle(state->queue);
+        }
+        for (auto& frame : state->frames) {
+            if (frame.fence != VK_NULL_HANDLE && g_vk.vkDestroyFence) {
+                g_vk.vkDestroyFence(state->device, frame.fence, nullptr);
+            }
+        }
+        if (state->commandPool != VK_NULL_HANDLE && g_vk.vkDestroyCommandPool) {
+            g_vk.vkDestroyCommandPool(state->device, state->commandPool, nullptr);
+        }
+    }
+    delete state;
+}
+
 bool create_vulkan_context(RenderingDevice* rd) {
     if (!rd) return false;
+    if (g_rive_context || g_vk_state) {
+        cleanup_vulkan_context();
+    }
 
     VkInstance instance = (VkInstance)rd->get_driver_resource(RenderingDevice::DRIVER_RESOURCE_TOPMOST_OBJECT, RID(), 0);
     VkPhysicalDevice physical_device = (VkPhysicalDevice)rd->get_driver_resource(RenderingDevice::DRIVER_RESOURCE_PHYSICAL_DEVICE, RID(), 0);
@@ -121,6 +163,7 @@ bool create_vulkan_context(RenderingDevice* rd) {
     g_vk.vkGetDeviceQueue = (PFN_vkGetDeviceQueue)get_device_proc_addr(device, "vkGetDeviceQueue");
     g_vk.vkCreateCommandPool = (PFN_vkCreateCommandPool)get_device_proc_addr(device, "vkCreateCommandPool");
     g_vk.vkAllocateCommandBuffers = (PFN_vkAllocateCommandBuffers)get_device_proc_addr(device, "vkAllocateCommandBuffers");
+    g_vk.vkResetCommandBuffer = (PFN_vkResetCommandBuffer)get_device_proc_addr(device, "vkResetCommandBuffer");
     g_vk.vkBeginCommandBuffer = (PFN_vkBeginCommandBuffer)get_device_proc_addr(device, "vkBeginCommandBuffer");
     g_vk.vkEndCommandBuffer = (PFN_vkEndCommandBuffer)get_device_proc_addr(device, "vkEndCommandBuffer");
     g_vk.vkQueueSubmit = (PFN_vkQueueSubmit)get_device_proc_addr(device, "vkQueueSubmit");
@@ -131,17 +174,17 @@ bool create_vulkan_context(RenderingDevice* rd) {
     g_vk.vkResetFences = (PFN_vkResetFences)get_device_proc_addr(device, "vkResetFences");
     g_vk.vkDestroyFence = (PFN_vkDestroyFence)get_device_proc_addr(device, "vkDestroyFence");
 
-    rive::gpu::RenderContextVulkanImpl::ContextOptions options;
-    
-    VkPhysicalDeviceFeatures features;
-    if (g_vk.vkGetPhysicalDeviceFeatures) {
-        g_vk.vkGetPhysicalDeviceFeatures(physical_device, &features);
-    } else {
-        // Fallback or error?
-        memset(&features, 0, sizeof(features));
+    if (!has_required_vulkan_functions()) {
+        UtilityFunctions::printerr("Rive: Vulkan device is missing required entry points.");
+        return false;
     }
 
-    rive::gpu::VulkanFeatures vulkan_features;
+    rive::gpu::RenderContextVulkanImpl::ContextOptions options;
+    
+    VkPhysicalDeviceFeatures features{};
+    g_vk.vkGetPhysicalDeviceFeatures(physical_device, &features);
+
+    rive::gpu::VulkanFeatures vulkan_features{};
     vulkan_features.independentBlend = features.independentBlend;
     vulkan_features.fillModeNonSolid = features.fillModeNonSolid;
     vulkan_features.fragmentStoresAndAtomics = features.fragmentStoresAndAtomics;
@@ -159,60 +202,75 @@ bool create_vulkan_context(RenderingDevice* rd) {
         return false;
     }
 
-    g_rive_context = ctx.release();
-    RiveRenderRegistry::get_singleton()->set_factory(g_rive_context);
+    std::unique_ptr<RiveVulkanState> state(new RiveVulkanState());
+    state->device = device;
 
-    // Initialize RiveVulkanState
-    if (!g_vk_state) {
-        g_vk_state = new RiveVulkanState();
-        g_vk_state->device = device;
-        
-        uint32_t queue_family_count = 0;
-        g_vk.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, nullptr);
-        LocalVector<VkQueueFamilyProperties> queue_families;
-        queue_families.resize(queue_family_count);
-        g_vk.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.ptr());
+    uint32_t queue_family_count = 0;
+    g_vk.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, nullptr);
+    if (queue_family_count == 0) {
+        UtilityFunctions::printerr("Rive: Vulkan device has no queue families.");
+        return false;
+    }
+    LocalVector<VkQueueFamilyProperties> queue_families;
+    queue_families.resize(queue_family_count);
+    g_vk.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.ptr());
 
-        uint32_t graphics_queue_family_index = UINT32_MAX;
-        for (uint32_t i = 0; i < queue_family_count; i++) {
-            if (queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-                graphics_queue_family_index = i;
-                break;
-            }
-        }
+    const VkQueue godot_queue = (VkQueue)rd->get_driver_resource(RenderingDevice::DRIVER_RESOURCE_COMMAND_QUEUE, RID(), 0);
+    if (godot_queue == VK_NULL_HANDLE) {
+        UtilityFunctions::printerr("Rive: Failed to retrieve Godot's Vulkan command queue.");
+        return false;
+    }
 
-        if (graphics_queue_family_index != UINT32_MAX) {
-            g_vk.vkGetDeviceQueue(device, graphics_queue_family_index, 0, &g_vk_state->queue);
+    const uint64_t family_resource = rd->get_driver_resource(RenderingDevice::DRIVER_RESOURCE_QUEUE_FAMILY, RID(), 0);
+    if (family_resource >= queue_family_count) {
+        UtilityFunctions::printerr("Rive: Godot reported an invalid Vulkan queue family.");
+        return false;
+    }
+    const uint32_t graphics_queue_family_index = static_cast<uint32_t>(family_resource);
+    if (!(queue_families[graphics_queue_family_index].queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+        UtilityFunctions::printerr("Rive: Godot's Vulkan command queue family is not graphics capable.");
+        return false;
+    }
+    state->queue = godot_queue;
 
-            VkCommandPoolCreateInfo pool_info = {};
-            pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-            pool_info.queueFamilyIndex = graphics_queue_family_index;
-            pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    VkCommandPoolCreateInfo pool_info = {};
+    pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pool_info.queueFamilyIndex = graphics_queue_family_index;
+    pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    if (g_vk.vkCreateCommandPool(device, &pool_info, nullptr, &state->commandPool) != VK_SUCCESS) {
+        UtilityFunctions::printerr("Rive: Failed to create Vulkan command pool.");
+        return false;
+    }
 
-            if (g_vk.vkCreateCommandPool(device, &pool_info, nullptr, &g_vk_state->commandPool) == VK_SUCCESS) {
-                // Create frames
-                g_vk_state->frames.resize(2); // Double buffering
-                
-                VkCommandBufferAllocateInfo alloc_info = {};
-                alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-                alloc_info.commandPool = g_vk_state->commandPool;
-                alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-                alloc_info.commandBufferCount = (uint32_t)g_vk_state->frames.size();
+    state->frames.resize(2);
+    VkCommandBufferAllocateInfo alloc_info = {};
+    alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    alloc_info.commandPool = state->commandPool;
+    alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc_info.commandBufferCount = (uint32_t)state->frames.size();
+    std::vector<VkCommandBuffer> buffers(state->frames.size());
+    if (g_vk.vkAllocateCommandBuffers(device, &alloc_info, buffers.data()) != VK_SUCCESS) {
+        UtilityFunctions::printerr("Rive: Failed to allocate Vulkan command buffers.");
+        destroy_vulkan_state(state.release());
+        return false;
+    }
 
-                std::vector<VkCommandBuffer> buffers(g_vk_state->frames.size());
-                if (g_vk.vkAllocateCommandBuffers(device, &alloc_info, buffers.data()) == VK_SUCCESS) {
-                    for (size_t i = 0; i < g_vk_state->frames.size(); ++i) {
-                        g_vk_state->frames[i].commandBuffer = buffers[i];
-                        
-                        VkFenceCreateInfo fence_info = {};
-                        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-                        fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT; // Start signaled so we don't wait on first frame
-                        g_vk.vkCreateFence(device, &fence_info, nullptr, &g_vk_state->frames[i].fence);
-                    }
-                }
-            }
+    for (size_t i = 0; i < state->frames.size(); ++i) {
+        state->frames[i].commandBuffer = buffers[i];
+        VkFenceCreateInfo fence_info = {};
+        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        if (g_vk.vkCreateFence(device, &fence_info, nullptr, &state->frames[i].fence) != VK_SUCCESS) {
+            UtilityFunctions::printerr("Rive: Failed to create Vulkan frame fence.");
+            destroy_vulkan_state(state.release());
+            return false;
         }
     }
+
+    // Publish only after every dependent resource was created successfully.
+    g_rive_context = ctx.release();
+    g_vk_state = state.release();
+    RiveRenderRegistry::get_singleton()->set_factory(g_rive_context);
 
     UtilityFunctions::print_verbose("RIVE: create_vulkan_context succeeded");
 
@@ -220,7 +278,8 @@ bool create_vulkan_context(RenderingDevice* rd) {
 }
 
 void render_texture_vulkan(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height) {
-    if (!g_rive_context || !rd || !drawable || !g_vk_state || !g_vk_state->queue) {
+    if (!g_rive_context || !rd || !drawable || !g_vk_state || !g_vk_state->queue ||
+        g_vk_state->frames.empty()) {
         return;
     }
 
@@ -230,14 +289,19 @@ void render_texture_vulkan(RenderingDevice *rd, RID texture_rid, RiveDrawable *d
     // Cycle frames
     FrameResources& frame = g_vk_state->frames[g_vk_state->currentFrame];
     g_vk_state->currentFrame = (g_vk_state->currentFrame + 1) % g_vk_state->frames.size();
+    VkCommandBuffer command_buffer = frame.commandBuffer;
+    if (command_buffer == VK_NULL_HANDLE || frame.fence == VK_NULL_HANDLE) return;
 
     // Wait for fence
-    if (g_vk.vkWaitForFences(device, 1, &frame.fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
+    constexpr uint64_t kFenceTimeoutNs = 30ULL * 1000ULL * 1000ULL * 1000ULL;
+    if (g_vk.vkWaitForFences(device, 1, &frame.fence, VK_TRUE, kFenceTimeoutNs) != VK_SUCCESS) {
+        UtilityFunctions::printerr("Rive: Timed out or failed waiting for a Vulkan frame fence.");
         return;
     }
-    g_vk.vkResetFences(device, 1, &frame.fence);
-
-    VkCommandBuffer command_buffer = frame.commandBuffer;
+    if (g_vk.vkResetCommandBuffer(command_buffer, 0) != VK_SUCCESS) {
+        UtilityFunctions::printerr("Rive: Failed to reset Vulkan command buffer.");
+        return;
+    }
     
     VkCommandBufferBeginInfo begin_info = {};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -274,34 +338,57 @@ void render_texture_vulkan(RenderingDevice *rd, RID texture_rid, RiveDrawable *d
 
             {
                 rive::RiveRenderer renderer(g_rive_context);
-                drawable->draw(&renderer);
+                drawable->replay_draw_commands(&renderer);
             }
 
-            static uint64_t frame_idx = 0;
-            frame_idx++;
+            const uint64_t frame_idx = ++g_vk_state->nextFrameNumber;
 
             rive::gpu::RenderContext::FlushResources fr;
             fr.renderTarget = rtarget.get();
             fr.externalCommandBuffer = command_buffer;
             fr.currentFrameNumber = frame_idx;
-            fr.safeFrameNumber = (frame_idx > 2) ? frame_idx - 2 : 0;
+            fr.safeFrameNumber = frame.frameNumber;
 
             g_rive_context->flush(fr);
+
+            // Rive may leave the external target in a color-attachment or
+            // general layout. Restore the state Godot expects before the
+            // canvas samples this texture.
+            rive::gpu::vkutil::ImageAccess sampled_access;
+            sampled_access.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            sampled_access.accessMask = VK_ACCESS_SHADER_READ_BIT;
+            sampled_access.pipelineStages = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            static_cast<rive::gpu::RenderTargetVulkanImpl *>(rtarget.get())
+                    ->accessTargetImage(command_buffer, sampled_access);
         }
     }
 
-    if (g_vk.vkEndCommandBuffer) {
-        g_vk.vkEndCommandBuffer(command_buffer);
+    if (g_vk.vkEndCommandBuffer(command_buffer) != VK_SUCCESS) {
+        UtilityFunctions::printerr("Rive: Failed to finish Vulkan command buffer.");
+        return;
     }
+
+    // Do not reset the reusable fence until the command buffer is known-good.
+    if (g_vk.vkResetFences(device, 1, &frame.fence) != VK_SUCCESS) return;
 
     VkSubmitInfo submit_info = {};
     submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &command_buffer;
 
-    if (g_vk.vkQueueSubmit) {
-        g_vk.vkQueueSubmit(g_vk_state->queue, 1, &submit_info, frame.fence);
+    if (g_vk.vkQueueSubmit(g_vk_state->queue, 1, &submit_info, frame.fence) != VK_SUCCESS) {
+        // A failed submit can never signal the fence. Recreate it signaled so
+        // the next frame cannot block forever.
+        g_vk.vkDestroyFence(device, frame.fence, nullptr);
+        frame.fence = VK_NULL_HANDLE;
+        VkFenceCreateInfo fence_info = {};
+        fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        g_vk.vkCreateFence(device, &fence_info, nullptr, &frame.fence);
+        UtilityFunctions::printerr("Rive: Failed to submit Vulkan command buffer.");
+        return;
     }
+    frame.frameNumber = g_vk_state->nextFrameNumber;
 }
 
 void cleanup_vulkan_context() {
@@ -309,6 +396,7 @@ void cleanup_vulkan_context() {
         g_vk.vkQueueWaitIdle(g_vk_state->queue);
     }
 
+    RiveRenderRegistry::get_singleton()->clear_renderer_states();
     if (g_rive_context) {
         delete g_rive_context;
         g_rive_context = nullptr;
@@ -316,17 +404,7 @@ void cleanup_vulkan_context() {
     RiveRenderRegistry::get_singleton()->set_factory(nullptr);
 
     if (g_vk_state) {
-        if (g_vk_state->device) {
-             for (auto& frame : g_vk_state->frames) {
-                if (frame.fence != VK_NULL_HANDLE && g_vk.vkDestroyFence) {
-                    g_vk.vkDestroyFence(g_vk_state->device, frame.fence, nullptr);
-                }
-            }
-            if (g_vk_state->commandPool != VK_NULL_HANDLE && g_vk.vkDestroyCommandPool) {
-                g_vk.vkDestroyCommandPool(g_vk_state->device, g_vk_state->commandPool, nullptr);
-            }
-        }
-        delete g_vk_state;
+        destroy_vulkan_state(g_vk_state);
         g_vk_state = nullptr;
     }
 

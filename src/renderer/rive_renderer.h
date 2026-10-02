@@ -3,11 +3,17 @@
 
 #include <godot_cpp/classes/rendering_device.hpp>
 #include <godot_cpp/classes/texture2d.hpp>
+#include <functional>
 #include "rive_render_registry.h"
 
 using namespace godot;
 
 namespace rive_integration {
+    // Runs backend-factory/resource work synchronously on Godot's render
+    // thread. Calls are serialized with render_texture(). It is safe to call
+    // this from a RiveRaw draw callback while command recording is active.
+    bool run_on_rive_render_thread(const std::function<void()> &p_task);
+
     void initialize_rive_renderer();
     void cleanup_rive_renderer();
     void render_texture(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height);

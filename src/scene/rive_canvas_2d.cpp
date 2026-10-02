@@ -2,10 +2,8 @@
 #include "rive_node.h"
 #include "../renderer/rive_renderer.h"
 #include <godot_cpp/core/class_db.hpp>
-#include <godot_cpp/classes/engine.hpp>
 #include <godot_cpp/classes/rendering_server.hpp>
 #include <godot_cpp/classes/rendering_device.hpp>
-#include <godot_cpp/classes/worker_thread_pool.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
 void RiveCanvas2D::_bind_methods() {
@@ -26,9 +24,11 @@ void RiveCanvas2D::_bind_methods() {
 
 RiveCanvas2D::RiveCanvas2D() {
     texture_target.instantiate();
+    RiveRenderRegistry::get_singleton()->add_drawable(this);
 }
 
 RiveCanvas2D::~RiveCanvas2D() {
+    RiveRenderRegistry::get_singleton()->remove_drawable(this);
     if (texture_target.is_valid()) {
         texture_target->clear();
     }
@@ -96,7 +96,7 @@ void RiveCanvas2D::_collect_descendants(Node *parent, const Transform2D &parent_
         if (rive_node) {
             // RiveNode draw() applies its own get_transform(); collect the
             // *parent* chain so we can push it on the renderer first.
-            active_nodes.push_back(rive_node);
+            active_nodes.push_back(ObjectID(rive_node->get_instance_id()));
             active_parent_xforms.push_back(parent_xform_in_canvas);
             // Continue descending; combine this node's local xform for further
             // descendants (e.g. RiveNode under a non-RiveCanvas RiveNode).
@@ -108,9 +108,14 @@ void RiveCanvas2D::_collect_descendants(Node *parent, const Transform2D &parent_
     }
 }
 
+RiveNode *RiveCanvas2D::_resolve_active_node(uint32_t p_index) const {
+    if (p_index >= active_nodes.size()) return nullptr;
+    return Object::cast_to<RiveNode>(ObjectDB::get_instance((uint64_t)active_nodes[p_index]));
+}
+
 void RiveCanvas2D::_advance_node(uint32_t p_index) {
-    if (p_index < active_nodes.size()) {
-        active_nodes[p_index]->advance(current_delta);
+    if (RiveNode *node = _resolve_active_node(p_index)) {
+        node->advance(current_delta);
     }
 }
 
@@ -121,15 +126,11 @@ void RiveCanvas2D::_process(double delta) {
 
     if (active_nodes.size() > 0) {
         current_delta = delta;
-        // In the editor, skip WorkerThreadPool to avoid race conditions with
-        // file scanning and resource reloading (node ptrs may become invalid)
-        if (Engine::get_singleton()->is_editor_hint()) {
-            for (uint32_t i = 0; i < (uint32_t)active_nodes.size(); i++) {
-                _advance_node(i);
-            }
-        } else {
-            int64_t group_id = WorkerThreadPool::get_singleton()->add_group_task(Callable(this, "_advance_node"), active_nodes.size(), -1, true, "RiveCanvas2D Advance");
-            WorkerThreadPool::get_singleton()->wait_for_group_task_completion(group_id);
+        // Rive instances and Godot Nodes do not provide a cross-thread
+        // mutation contract. Advance them on the scene thread so tree edits,
+        // resource reloads, input, and rendering cannot race these raw pointers.
+        for (uint32_t i = 0; i < (uint32_t)active_nodes.size(); i++) {
+            _advance_node(i);
         }
     }
 
@@ -142,7 +143,7 @@ void RiveCanvas2D::_draw() {
     if (!texture_target.is_valid()) return;
 
     texture_target->resize(size);
-    if (!texture_target->get_texture_rid().is_valid()) return;
+    if (!texture_target->is_valid()) return;
 
     RenderingServer *rs = RenderingServer::get_singleton();
     if (!rs) return;
@@ -162,7 +163,7 @@ void RiveCanvas2D::draw(rive::Renderer *renderer) {
         ? cull_rect
         : Rect2(0, 0, size.x, size.y);
     for (uint32_t i = 0; i < (uint32_t)active_nodes.size(); i++) {
-        RiveNode *node = active_nodes[i];
+        RiveNode *node = _resolve_active_node(i);
         const Transform2D &parent_xform = active_parent_xforms[i];
         if (!node || !node->is_visible()) continue;
 

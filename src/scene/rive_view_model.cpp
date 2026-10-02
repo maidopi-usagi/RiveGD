@@ -1,5 +1,6 @@
 #include "rive_view_model.h"
 #include "../renderer/rive_render_registry.h"
+#include "../renderer/rive_renderer.h"
 #include "../renderer/rive_texture_factory.h"
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
@@ -21,7 +22,28 @@
 
 using namespace godot;
 
+namespace {
+template <typename T>
+rive::ViewModelInstanceValue *view_model_value_ptr(T *p_value) {
+    return p_value;
+}
+
+template <typename T>
+rive::ViewModelInstanceValue *view_model_value_ptr(const rive::rcp<T> &p_value) {
+    return p_value.get();
+}
+} // namespace
+
 // --- RiveViewModelProperty ---
+
+RiveViewModelProperty::~RiveViewModelProperty() {
+    if (!instance_ref) return;
+    rive::rcp<rive::ViewModelInstance> old_instance = std::move(instance_ref);
+    auto release_old = [&]() { old_instance.reset(); };
+    if (!rive_integration::run_on_rive_render_thread(release_old)) {
+        release_old();
+    }
+}
 
 void RiveViewModelProperty::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_property_name"), &RiveViewModelProperty::get_property_name);
@@ -61,7 +83,7 @@ float RiveViewModelNumber::get_value() const {
 
 String RiveViewModelNumber::get_property_name() const {
     if (instance_number) {
-        return String(instance_number->name().c_str());
+        return String::utf8(instance_number->name().c_str());
     }
     return "";
 }
@@ -93,14 +115,14 @@ void RiveViewModelString::set_value(const String& p_value) {
 
 String RiveViewModelString::get_value() const {
     if (instance_string) {
-        return String(instance_string->propertyValue().c_str());
+        return String::utf8(instance_string->propertyValue().c_str());
     }
     return "";
 }
 
 String RiveViewModelString::get_property_name() const {
     if (instance_string) {
-        return String(instance_string->name().c_str());
+        return String::utf8(instance_string->name().c_str());
     }
     return "";
 }
@@ -138,7 +160,7 @@ bool RiveViewModelBoolean::get_value() const {
 
 String RiveViewModelBoolean::get_property_name() const {
     if (instance_boolean) {
-        return String(instance_boolean->name().c_str());
+        return String::utf8(instance_boolean->name().c_str());
     }
     return "";
 }
@@ -187,7 +209,7 @@ Color RiveViewModelColor::get_value() const {
 
 String RiveViewModelColor::get_property_name() const {
     if (instance_color) {
-        return String(instance_color->name().c_str());
+        return String::utf8(instance_color->name().c_str());
     }
     return "";
 }
@@ -260,7 +282,7 @@ String RiveViewModelEnum::get_value_name() const {
             if (data_enum) {
                 std::vector<rive::DataEnumValue*> values = data_enum->values();
                 if (idx >= 0 && idx < (int)values.size() && values[idx]) {
-                    return String(values[idx]->key().c_str());
+                    return String::utf8(values[idx]->key().c_str());
                 }
             }
         }
@@ -281,7 +303,7 @@ PackedStringArray RiveViewModelEnum::get_values() const {
                 std::vector<rive::DataEnumValue*> values = data_enum->values();
                 for (size_t i = 0; i < values.size(); ++i) {
                     if (values[i]) {
-                        arr.push_back(String(values[i]->key().c_str()));
+                        arr.push_back(String::utf8(values[i]->key().c_str()));
                     }
                 }
             }
@@ -292,7 +314,7 @@ PackedStringArray RiveViewModelEnum::get_values() const {
 
 String RiveViewModelEnum::get_property_name() const {
     if (instance_enum) {
-        return String(instance_enum->name().c_str());
+        return String::utf8(instance_enum->name().c_str());
     }
     return "";
 }
@@ -318,7 +340,7 @@ void RiveViewModelTrigger::fire() {
 
 String RiveViewModelTrigger::get_property_name() const {
     if (instance_trigger) {
-        return String(instance_trigger->name().c_str());
+        return String::utf8(instance_trigger->name().c_str());
     }
     return "";
 }
@@ -346,18 +368,37 @@ void RiveViewModelImage::set_value(const Ref<Texture2D>& p_texture) {
     rive::rcp<rive::RenderImage> render_image = rive_integration::RiveTextureFactory::make_image(p_texture);
     
     if (render_image) {
-        instance_image->value(render_image.get());
+        // value() releases the previous RenderImage, so it shares the same
+        // render-thread serialization boundary as decode and frame replay.
+        rive_integration::run_on_rive_render_thread([&]() {
+            instance_image->value(render_image.get());
+        });
     }
 }
 
 String RiveViewModelImage::get_property_name() const {
     if (instance_image) {
-        return String(instance_image->name().c_str());
+        return String::utf8(instance_image->name().c_str());
     }
     return "";
 }
 
 // --- RiveViewModelInstance ---
+
+RiveViewModelInstance::~RiveViewModelInstance() {
+    // Cached property wrappers may also retain this instance. Drop them first,
+    // then ensure the final native instance (and any image values it owns) is
+    // released on the render thread.
+    property_cache.clear();
+    child_vm_cache.clear();
+    if (!instance) return;
+
+    rive::rcp<rive::ViewModelInstance> old_instance = std::move(instance);
+    auto release_old = [&]() { old_instance.reset(); };
+    if (!rive_integration::run_on_rive_render_thread(release_old)) {
+        release_old();
+    }
+}
 
 void RiveViewModelInstance::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_number_property", "path"), &RiveViewModelInstance::get_number_property);
@@ -370,7 +411,14 @@ void RiveViewModelInstance::_bind_methods() {
 }
 
 void RiveViewModelInstance::_init(rive::rcp<rive::ViewModelInstance> p_instance) {
-    instance = p_instance;
+    rive::rcp<rive::ViewModelInstance> old_instance = std::move(instance);
+    instance = std::move(p_instance);
+    if (old_instance) {
+        auto release_old = [&]() { old_instance.reset(); };
+        if (!rive_integration::run_on_rive_render_thread(release_old)) {
+            release_old();
+        }
+    }
 }
 
 static rive::ViewModelInstance *resolve_view_model_instance(rive::ViewModelInstance *root, const String &path, String &out_property_name)
@@ -595,8 +643,10 @@ bool RiveViewModelInstance::_set(const StringName &p_name, const Variant &p_valu
         if (texture.is_valid()) {
             rive::rcp<rive::RenderImage> render_image = rive_integration::RiveTextureFactory::make_image(texture);
             if (render_image) {
-                prop->as<rive::ViewModelInstanceAssetImage>()->value(render_image.get());
-                return true;
+                rive::ViewModelInstanceAssetImage *image_property = prop->as<rive::ViewModelInstanceAssetImage>();
+                return rive_integration::run_on_rive_render_thread([&]() {
+                    image_property->value(render_image.get());
+                });
             }
         }
         return true; // Handled, even if failed or null
@@ -695,11 +745,11 @@ void RiveViewModelInstance::_get_property_list(List<PropertyInfo> *p_list) const
     if (!instance) return;
     
     const auto& props = instance->propertyValues();
-    for (const auto& prop_rcp : props) {
-        rive::ViewModelInstanceValue* prop = prop_rcp.get();
+    for (const auto &entry : props) {
+        rive::ViewModelInstanceValue *prop = view_model_value_ptr(entry);
         if (!prop) continue;
         
-        String name = prop->name().c_str();
+        String name = String::utf8(prop->name().c_str());
         
         if (prop->is<rive::ViewModelInstanceNumber>()) {
             p_list->push_back(PropertyInfo(Variant::OBJECT, name, PROPERTY_HINT_RESOURCE_TYPE, "RiveViewModelNumber"));

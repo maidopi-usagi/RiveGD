@@ -26,6 +26,18 @@
 
 using namespace godot;
 
+namespace {
+template <typename T>
+rive::ViewModelInstanceValue *view_model_value_ptr(T *p_value) {
+    return p_value;
+}
+
+template <typename T>
+rive::ViewModelInstanceValue *view_model_value_ptr(const rive::rcp<T> &p_value) {
+    return p_value.get();
+}
+} // namespace
+
 void RiveViewModelInspector::_bind_methods() {
     ClassDB::bind_method(D_METHOD("_on_prev_page"), &RiveViewModelInspector::_on_prev_page);
     ClassDB::bind_method(D_METHOD("_on_next_page"), &RiveViewModelInspector::_on_next_page);
@@ -57,11 +69,11 @@ void RiveViewModelInspector::_collect_properties(rive::ViewModelInstance *vm, St
     if (!vm) return;
 
     const auto& props = vm->propertyValues();
-    for (const auto& value_rcp : props) {
-        rive::ViewModelInstanceValue* value = value_rcp.get();
+    for (const auto &entry : props) {
+        rive::ViewModelInstanceValue *value = view_model_value_ptr(entry);
         if (!value) continue;
 
-        String name = value->name().c_str();
+        String name = String::utf8(value->name().c_str());
         String path = prefix.is_empty() ? name : prefix + "." + name;
 
         out_list.push_back({value, path, name, indent});
@@ -165,7 +177,7 @@ void RiveViewModelInspector::_update_ui() {
             LineEdit *editor = memnew(LineEdit);
             editor->set_h_size_flags(Control::SIZE_EXPAND_FILL);
             
-            String val = value->as<rive::ViewModelInstanceString>()->propertyValue().c_str();
+            String val = String::utf8(value->as<rive::ViewModelInstanceString>()->propertyValue().c_str());
             if (current_values.has(path)) val = current_values[path];
             editor->set_text(val);
 
@@ -215,7 +227,7 @@ void RiveViewModelInspector::_update_ui() {
                         std::vector<rive::DataEnumValue *> values = data_enum->values();
                         for (size_t i = 0; i < values.size(); ++i) {
                             if (values[i]) {
-                                editor->add_item(values[i]->key().c_str(), i);
+                                editor->add_item(String::utf8(values[i]->key().c_str()), i);
                                 found_values = true;
                             }
                         }

@@ -42,7 +42,9 @@ public:
     bool load(rive::rcp<rive::File> file);
     void set_artboard(std::unique_ptr<rive::ArtboardInstance> p_artboard, rive::rcp<rive::File> p_file = nullptr);
     
-    void advance(float delta);
+    // Advances the active scene and applies it to the artboard. Returns whether
+    // the active scene reports that it still needs future advances.
+    bool advance(float delta);
     void draw(rive::Renderer *renderer, const rive::Mat2D &transform);
 
     // Input handling

@@ -20,7 +20,8 @@ private:
     
     bool auto_play = true;
 
-    void _load_artboard();
+    bool _load_artboard();
+    void _on_rive_file_changed();
 
 protected:
     static void _bind_methods();

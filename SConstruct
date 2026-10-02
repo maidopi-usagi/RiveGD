@@ -14,29 +14,55 @@ def apply_patch(patch_path, target_dir, patch_name):
     patch_file = os.path.abspath(patch_path)
     target_dir = os.path.abspath(target_dir)
     
-    if os.path.exists(patch_file) and os.path.exists(target_dir):
-        try:
-            # Check if patch is already applied (reverse check succeeds if applied)
-            subprocess.check_call(["git", "apply", "--check", "--reverse", patch_file], cwd=target_dir, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
-            print(f"{patch_name} patch already applied.")
-        except subprocess.CalledProcessError:
-            # Not applied (or conflicts), try to apply
-            print(f"Applying {patch_name} patch...")
-            try:
-                subprocess.check_call(["git", "apply", patch_file], cwd=target_dir)
-                print(f"{patch_name} patch applied successfully.")
-            except subprocess.CalledProcessError as e:
-                print(f"Warning: Failed to apply {patch_name} patch: {e}")
-                print(f"Build may fail if {patch_name} support is missing.")
+    if not os.path.isfile(patch_file):
+        raise RuntimeError(f"Required {patch_name} patch is missing: {patch_file}")
+    if not os.path.isdir(target_dir):
+        raise RuntimeError(f"Patch target is missing: {target_dir}")
+
+    try:
+        # Check if patch is already applied (reverse check succeeds if applied).
+        subprocess.check_call(
+            ["git", "apply", "--ignore-space-change", "--check", "--reverse", patch_file],
+            cwd=target_dir,
+            stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+        )
+        print(f"{patch_name} patch already applied.")
+        return
+    except subprocess.CalledProcessError:
+        pass
+
+    # Validate before modifying the submodule. A conflict is fatal: continuing
+    # would compile RiveGD against an API it was not written for.
+    try:
+        subprocess.check_call(
+            ["git", "apply", "--ignore-space-change", "--check", patch_file],
+            cwd=target_dir,
+        )
+        subprocess.check_call(
+            ["git", "apply", "--ignore-space-change", patch_file], cwd=target_dir
+        )
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"Failed to apply required {patch_name} patch. "
+            "Ensure patch files are checked out with LF line endings and the "
+            "rive-runtime submodule matches the pinned revision."
+        ) from exc
+    print(f"{patch_name} patch applied successfully.")
 
 rive_runtime_dir = "third-party/rive-runtime"
-
-if env["platform"] == "macos":
-    apply_patch("src/patches/metal_texture_support.patch", rive_runtime_dir, "Metal texture support")
 
 # Apply OpenGL patch for all platforms (or specifically non-macOS if desired, but harmless if applied)
 # This patch fixes OpenGL compatibility issues (SSBOs, GLES version)
 apply_patch("src/patches/opengl_texture_support.patch", rive_runtime_dir, "OpenGL texture support")
+
+# Godot render textures are offscreen resources, not swapchain images. Allow
+# the D3D12 integration to declare their actual initial resource state.
+apply_patch("src/patches/d3d12_external_texture_state.patch", rive_runtime_dir, "D3D12 external texture state")
+
+# MSVC instantiates the inline rcp<Texture> return before other backend headers
+# can supply Texture's definition. Keep the upstream header self-contained.
+apply_patch("src/patches/texture_header_support.patch", rive_runtime_dir, "Complete GPU texture type")
 
 # Build Rive Runtime
 # We pass the godot-cpp environment so it inherits platform flags/compilers

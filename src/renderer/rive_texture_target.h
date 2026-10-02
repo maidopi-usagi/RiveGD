@@ -18,6 +18,10 @@ private:
     RID texture_rid;
     Ref<Texture2DRD> texture_rd_ref;
     Size2i texture_size;
+    bool resize_result = false;
+
+    void resize_on_render_thread(Size2i new_size);
+    void clear_on_render_thread();
 
 protected:
     static void _bind_methods() {}
@@ -26,7 +30,7 @@ public:
     RiveTextureTarget();
     ~RiveTextureTarget();
 
-    // Returns true if texture was recreated
+    // Returns true when a valid target exists after the call.
     bool resize(Size2i new_size);
     
     RID get_texture_rid() const { return texture_rid; }

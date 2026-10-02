@@ -1,4 +1,5 @@
 #include "rive_types.h"
+#include "../renderer/rive_renderer.h"
 #include "rive/math/raw_path.hpp"
 #include "rive/math/aabb.hpp"
 #include "rive/shapes/paint/image_sampler.hpp"
@@ -848,12 +849,42 @@ void RiveRendererWrapper::draw_image_mesh(Ref<RiveImage> image,
         UtilityFunctions::push_warning("RiveRendererWrapper.draw_image_mesh: vertex count exceeds uint16 limit.");
         return;
     }
-    rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
-    if (!factory) return;
-
+    for (int k = 0; k < icount; k++) {
+        int v = indices[k];
+        if (v < 0 || v >= vcount || v > 65535) {
+            UtilityFunctions::printerr("RiveImage.draw_mesh: index is outside the vertex array.");
+            return;
+        }
+    }
     // Each Vector2 is two floats; sizeof(Vector2) == 8 bytes assumed.
     size_t vert_bytes = (size_t)vcount * sizeof(float) * 2;
     size_t idx_bytes = (size_t)icount * sizeof(uint16_t);
+
+    std::vector<float> vertex_data((size_t)vcount * 2);
+    std::vector<float> uv_data((size_t)vcount * 2);
+    std::vector<uint16_t> index_data((size_t)icount);
+    for (int k = 0; k < vcount; k++) {
+        vertex_data[(size_t)k * 2] = vertices[k].x;
+        vertex_data[(size_t)k * 2 + 1] = vertices[k].y;
+        uv_data[(size_t)k * 2] = uvs[k].x;
+        uv_data[(size_t)k * 2 + 1] = uvs[k].y;
+    }
+    for (int k = 0; k < icount; k++) {
+        index_data[(size_t)k] = (uint16_t)indices[k];
+    }
+
+    // The draw callback is normally recorded on the scene thread. Defer GPU
+    // buffer creation/mapping to replay on Godot's render thread.
+    if (auto *recording = dynamic_cast<RiveCommandRecordingTarget *>(renderer)) {
+        recording->record_image_mesh(image->get_render_image(),
+                                     vertex_data.data(), uv_data.data(), index_data.data(),
+                                     (uint32_t)vcount, (uint32_t)icount,
+                                     blend_mode, opacity);
+        return;
+    }
+
+    rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
+    if (!factory) return;
 
     rive::rcp<rive::RenderBuffer> vb = factory->makeRenderBuffer(
         rive::RenderBufferType::vertex,
@@ -872,24 +903,23 @@ void RiveRendererWrapper::draw_image_mesh(Ref<RiveImage> image,
     if (void* vp = vb->map()) {
         float* dst = (float*)vp;
         for (int k = 0; k < vcount; k++) {
-            dst[k * 2 + 0] = vertices[k].x;
-            dst[k * 2 + 1] = vertices[k].y;
+            dst[k * 2 + 0] = vertex_data[(size_t)k * 2];
+            dst[k * 2 + 1] = vertex_data[(size_t)k * 2 + 1];
         }
         vb->unmap();
     }
     if (void* up = ub->map()) {
         float* dst = (float*)up;
         for (int k = 0; k < vcount; k++) {
-            dst[k * 2 + 0] = uvs[k].x;
-            dst[k * 2 + 1] = uvs[k].y;
+            dst[k * 2 + 0] = uv_data[(size_t)k * 2];
+            dst[k * 2 + 1] = uv_data[(size_t)k * 2 + 1];
         }
         ub->unmap();
     }
     if (void* ip = ib->map()) {
         uint16_t* dst = (uint16_t*)ip;
         for (int k = 0; k < icount; k++) {
-            int v = indices[k];
-            dst[k] = (uint16_t)(v < 0 ? 0 : (v > 65535 ? 65535 : v));
+            dst[k] = index_data[(size_t)k];
         }
         ib->unmap();
     }
@@ -913,23 +943,47 @@ void RiveImage::_bind_methods() {
     ClassDB::bind_method(D_METHOD("is_loaded"), &RiveImage::is_loaded);
 }
 
+RiveImage::~RiveImage() {
+    if (!render_image) return;
+    if (!rive_integration::run_on_rive_render_thread([this]() {
+            render_image.reset();
+        })) {
+        // Renderer teardown normally destroys scene resources before removing
+        // the RenderingServer. Avoid leaking if destruction happens later.
+        render_image.reset();
+    }
+}
+
 bool RiveImage::load_from_buffer(PackedByteArray bytes) {
-    rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
-    if (!factory) {
+    if (bytes.size() == 0) return false;
+
+    bool factory_ready = false;
+    bool loaded = false;
+    const bool executed = rive_integration::run_on_rive_render_thread([&]() {
+        rive::Factory *factory = RiveRenderRegistry::get_singleton()->get_factory();
+        if (!factory) return;
+        factory_ready = true;
+
+        rive::Span<const uint8_t> span(bytes.ptr(), (size_t)bytes.size());
+        rive::rcp<rive::RenderImage> next_image = factory->decodeImage(span);
+        // Both replacing the old image and dropping its final reference must
+        // happen on the render thread.
+        render_image = std::move(next_image);
+        if (render_image) {
+            width = render_image->width();
+            height = render_image->height();
+            loaded = true;
+        } else {
+            width = 0;
+            height = 0;
+        }
+    });
+
+    if (!executed || !factory_ready) {
         UtilityFunctions::push_warning("RiveImage: factory not ready, cannot decode image yet.");
         return false;
     }
-    if (bytes.size() == 0) return false;
-    rive::Span<const uint8_t> span(bytes.ptr(), (size_t)bytes.size());
-    render_image = factory->decodeImage(span);
-    if (render_image) {
-        width = render_image->width();
-        height = render_image->height();
-        return true;
-    }
-    width = 0;
-    height = 0;
-    return false;
+    return loaded;
 }
 
 bool RiveImage::load_from_texture(Ref<Texture2D> texture) {

@@ -5,9 +5,13 @@
 #include <godot_cpp/classes/input_event_mouse_button.hpp>
 #include <godot_cpp/classes/input_event_mouse_motion.hpp>
 
+#include <rive/animation/linear_animation_instance.hpp>
+#include <rive/animation/state_machine_instance.hpp>
+
 void RiveFileInstance::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_rive_file", "file"), &RiveFileInstance::set_rive_file);
     ClassDB::bind_method(D_METHOD("get_rive_file"), &RiveFileInstance::get_rive_file);
+    ClassDB::bind_method(D_METHOD("_on_rive_file_changed"), &RiveFileInstance::_on_rive_file_changed);
     
     ClassDB::bind_method(D_METHOD("set_artboard_name", "name"), &RiveFileInstance::set_artboard_name);
     ClassDB::bind_method(D_METHOD("get_artboard_name"), &RiveFileInstance::get_artboard_name);
@@ -34,6 +38,14 @@ RiveFileInstance::RiveFileInstance() {
 }
 
 RiveFileInstance::~RiveFileInstance() {
+    if (rive_file_resource.is_valid()) {
+        const Callable changed_callback(this, "_on_rive_file_changed");
+        if (rive_file_resource->is_connected("changed", changed_callback)) {
+            rive_file_resource->disconnect("changed", changed_callback);
+        }
+    }
+    rive_player.unref();
+    rive_file_resource.unref();
 }
 
 void RiveFileInstance::_notification(int p_what) {
@@ -45,8 +57,35 @@ void RiveFileInstance::_notification(int p_what) {
 }
 
 void RiveFileInstance::set_rive_file(const Ref<RiveFile> &p_file) {
+    if (rive_file_resource == p_file) return;
+
+    const Callable changed_callback(this, "_on_rive_file_changed");
+    Ref<RiveFile> previous_file = rive_file_resource;
+    if (previous_file.is_valid() && previous_file->is_connected("changed", changed_callback)) {
+        previous_file->disconnect("changed", changed_callback);
+    }
+
     rive_file_resource = p_file;
-    _load_artboard();
+    if (rive_file_resource.is_valid() && !rive_file_resource->is_connected("changed", changed_callback)) {
+        rive_file_resource->connect("changed", changed_callback);
+    }
+
+    if (!_load_artboard()) {
+        if (rive_file_resource.is_valid() && rive_file_resource->is_connected("changed", changed_callback)) {
+            rive_file_resource->disconnect("changed", changed_callback);
+        }
+        rive_file_resource = previous_file;
+        if (rive_file_resource.is_valid() && !rive_file_resource->is_connected("changed", changed_callback)) {
+            rive_file_resource->connect("changed", changed_callback);
+        }
+    }
+    queue_redraw();
+}
+
+void RiveFileInstance::_on_rive_file_changed() {
+    if (!_load_artboard()) {
+        UtilityFunctions::printerr("RiveFileInstance: resource reload failed; keeping the previous playable instance.");
+    }
     queue_redraw();
 }
 
@@ -55,8 +94,12 @@ Ref<RiveFile> RiveFileInstance::get_rive_file() const {
 }
 
 void RiveFileInstance::set_artboard_name(const String &p_name) {
+    if (artboard_name == p_name) return;
+    String previous_name = artboard_name;
     artboard_name = p_name;
-    _load_artboard();
+    if (!_load_artboard()) {
+        artboard_name = previous_name;
+    }
     queue_redraw();
 }
 
@@ -65,8 +108,12 @@ String RiveFileInstance::get_artboard_name() const {
 }
 
 void RiveFileInstance::set_state_machine_name(const String &p_name) {
+    if (state_machine_name == p_name) return;
+    String previous_name = state_machine_name;
     state_machine_name = p_name;
-    _load_artboard();
+    if (!_load_artboard()) {
+        state_machine_name = previous_name;
+    }
 }
 
 String RiveFileInstance::get_state_machine_name() const {
@@ -74,8 +121,12 @@ String RiveFileInstance::get_state_machine_name() const {
 }
 
 void RiveFileInstance::set_animation_name(const String &p_name) {
+    if (animation_name == p_name) return;
+    String previous_name = animation_name;
     animation_name = p_name;
-    _load_artboard();
+    if (!_load_artboard()) {
+        animation_name = previous_name;
+    }
 }
 
 String RiveFileInstance::get_animation_name() const {
@@ -90,13 +141,19 @@ bool RiveFileInstance::get_auto_play() const {
     return auto_play;
 }
 
-void RiveFileInstance::_load_artboard() {
-    if (rive_file_resource.is_null()) return;
-    if (!rive_player.is_valid()) return;
+bool RiveFileInstance::_load_artboard() {
+    if (!rive_player.is_valid()) return false;
+    if (rive_file_resource.is_null()) {
+        rive_player->set_artboard(nullptr);
+        return true;
+    }
     
     std::unique_ptr<rive::ArtboardInstance> artboard = rive_file_resource->instantiate_artboard(artboard_name);
 
-    if (!artboard) return;
+    if (!artboard) {
+        UtilityFunctions::printerr("RiveFileInstance: failed to instantiate artboard '" + artboard_name + "'.");
+        return false;
+    }
 
     rive::rcp<rive::File> file;
     if (rive::File* raw = rive_file_resource->get_rive_file()) {
@@ -105,13 +162,29 @@ void RiveFileInstance::_load_artboard() {
         file = rive::rcp<rive::File>(raw);
     }
 
-    rive_player->set_artboard(std::move(artboard), file);
+    // Validate the requested scene against the candidate before replacing the
+    // currently playable player state.
+    if (!state_machine_name.is_empty()) {
+        std::unique_ptr<rive::StateMachineInstance> candidate = artboard->stateMachineNamed(state_machine_name.utf8().get_data());
+        if (!candidate) {
+            UtilityFunctions::printerr("RiveFileInstance: state machine not found: " + state_machine_name);
+            return false;
+        }
+    } else if (!animation_name.is_empty()) {
+        std::unique_ptr<rive::LinearAnimationInstance> candidate = artboard->animationNamed(animation_name.utf8().get_data());
+        if (!candidate) {
+            UtilityFunctions::printerr("RiveFileInstance: animation not found: " + animation_name);
+            return false;
+        }
+    }
 
+    rive_player->set_artboard(std::move(artboard), file);
     if (!state_machine_name.is_empty()) {
         rive_player->play_state_machine(state_machine_name);
     } else if (!animation_name.is_empty()) {
         rive_player->play_animation(animation_name);
     }
+    return true;
 }
 
 void RiveFileInstance::advance(double delta) {

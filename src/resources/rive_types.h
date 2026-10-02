@@ -157,6 +157,8 @@ protected:
     static void _bind_methods();
 
 public:
+    ~RiveImage();
+
     bool load_from_buffer(PackedByteArray bytes);
     bool load_from_texture(Ref<Texture2D> texture);
 

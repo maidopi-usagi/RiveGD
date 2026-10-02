@@ -19,7 +19,7 @@ https://github.com/user-attachments/assets/615cefe9-f9ba-4821-b8d4-bf70510b7d0c
 ## Features
 
 - **Hardware Accelerated Rendering**
-- **Multiple Backends**: Supports Vulkan, Metal, Direct3D 12, OpenGL (desktop, partially), and GLES3 (Android fallback).
+- **Multiple Backends**: Windows supports Vulkan, Direct3D 12, and OpenGL (partial); macOS uses Metal; Linux supports Vulkan and OpenGL (partial); Android uses Vulkan with a GLES3 fallback.
 - **Godot Integration**:
     - `RiveControl`: A Control node for UI integration.
     - `RiveFileInstance`: A Node2D for 2D scene integration.
@@ -65,8 +65,7 @@ DO NOT USE IN PRODUCTION as APIs will change and stability is not tested well.
 ## Limitations
 
 - **Android**: arm64 builds are produced by CI (Vulkan primary, GLES3 fallback). Not yet tested on a physical device — expect rough edges.
-- **iOS**: Not supported yet.
-- Linux and Windows builds are produced by CI but only lightly smoke-tested.
+- **Not supported yet:** iOS / Web. CI builds Windows, macOS, Linux, and Android, and includes Linux Vulkan smoke checks with Godot 4.5 and 4.6.
 - **OpenGL backend:** Godot uses OpenGL3 while Rive needs 4+. Applied a small patch upon official repo to support OpenGL3
    - MacOS doesn't support native GLES fallback so cannot work on MacOS right now. I'll looking into this when I have time, maybe fallback to ANGLE when ANGLE backend got fixed.
    - ANGLE Backend: Godot official builds links ANGLE statically. I can only make it work using dynamic-linked libEGL and libGLESv2.
@@ -74,7 +73,7 @@ DO NOT USE IN PRODUCTION as APIs will change and stability is not tested well.
 
 ## Todo
 
-- [ ] **Platform Support**: Physical device testing for Android; iOS support.
+- [ ] **Platform Support**: Physical device testing for Android; iOS and Web support.
 - [ ] **Android**: Color space correction (gamma→linear) for linear-color-space Godot projects.
 - [ ] **Rendering**: Add more vector drawing commands.
 - [ ] **Integration**: Implement `RiveRenderTargetTexture` for rendering Rive content to a Godot Texture resource.
@@ -103,14 +102,17 @@ DO NOT USE IN PRODUCTION as APIs will change and stability is not tested well.
         - Or set `DIRECTX_HEADERS_PATH` environment variable.
     - **Shader Compiler**: `fxc` (from Windows SDK) must be in your PATH or standard location.
 - Shader compilation tools:
-    - **Vulkan**: `glslangValidator` and `spirv-opt` (from Vulkan SDK)
+    - **Vulkan**: `glslangValidator` (from the Vulkan SDK or glslang tools package)
     - **macOS (Metal)**: Xcode Command Line Tools (`xcrun`)
 - **Android**:
-    - Android SDK + NDK (the build system auto-detects the latest installed NDK version)
-    - `glslangValidator` and `spirv-opt` on PATH
+    - Android SDK + NDK 28 or later (CI pins NDK 28.1.13356709; pass `ndk_version=<installed-version>` for local builds)
+    - `glslangValidator` and `spirv-opt` on PATH (or set `GLSLANG_VALIDATOR` and `SPIRV_OPT`)
     - Modern Vulkan headers (≥ 1.4.318) — set `VULKAN_SDK` to a directory containing them, or let CI fetch them automatically
+    - The extension links with 16 KB page alignment for compatible Android devices.
 
 ### Build Steps
+
+The Rive submodule is pinned to upstream `runtime-v0.1.502` (`820cc19bd8405f84a8f85f9f388a133d6a2c7511`). Its matching HarfBuzz 13.1.1 and Yoga grid dependencies are downloaded from fixed commits with SHA-256 verification; upgraded caches use separate directories from older builds.
 
 1. **Clone the repository** (including submodules):
    ```bash
@@ -119,7 +121,7 @@ DO NOT USE IN PRODUCTION as APIs will change and stability is not tested well.
    ```
 
 2. **Generate Rive Shaders**:
-   Before compiling, you need to generate the shader headers for the Rive runtime. The third positional arg picks a platform-specific subset (`macos` / `windows` / `linuxbsd`); omit it to build all.
+   Before compiling, generate the shader headers for the Rive runtime. The third positional argument selects `macos`, `windows`, `linux`, or `android`. Omitting it selects the current host platform. Android requires `spirv-opt` for upstream's Adreno driver workarounds. The script reads the pinned runtime's shader rules and invalidates its cache when shader sources, platform, or optimizer configuration change.
    ```bash
    python3 scripts/build_shaders.py \
        third-party/rive-runtime/renderer/src/shaders \
@@ -149,4 +151,11 @@ DO NOT USE IN PRODUCTION as APIs will change and stability is not tested well.
    ```
 
 4. **Use in Godot**:
-   Open the `project/` directory in Godot. The `RiveViewer` node should be available.
+   Open the `project/` directory in Godot. The `RiveControl`, `RiveCanvas2D`, and `RiveRaw` nodes should be available.
+
+   After a desktop debug build, run the GPU smoke test from the repository root:
+   ```bash
+   godot --path project --rendering-method mobile --rendering-driver vulkan \
+       --render-thread separate --script ../scripts/smoke_test.gd
+   ```
+   It checks rendered path/image pixels, SVG resource reload, binary `.riv` import, and resource teardown. Use a real graphics display; headless mode does not exercise GPU rendering.

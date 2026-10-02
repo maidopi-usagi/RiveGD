@@ -1,0 +1,11 @@
+diff --git a/renderer/include/rive/renderer/render_context_impl.hpp b/renderer/include/rive/renderer/render_context_impl.hpp
+--- a/renderer/include/rive/renderer/render_context_impl.hpp
++++ b/renderer/include/rive/renderer/render_context_impl.hpp
+@@ -5,6 +5,7 @@
+ #pragma once
+
+ #include "rive/renderer/render_context.hpp"
+ #include "rive/gpu_texture_format.hpp"
++#include "rive/renderer/texture.hpp"
+
+ #ifdef RIVE_CANVAS

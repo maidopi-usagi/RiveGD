@@ -1,10 +1,12 @@
 #include "rive_multi_instance.h"
+#include "../renderer/rive_renderer.h"
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
 void RiveMultiInstance::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_rive_file", "file"), &RiveMultiInstance::set_rive_file);
     ClassDB::bind_method(D_METHOD("get_rive_file"), &RiveMultiInstance::get_rive_file);
+    ClassDB::bind_method(D_METHOD("_on_rive_file_changed"), &RiveMultiInstance::_on_rive_file_changed);
     
     ClassDB::bind_method(D_METHOD("set_artboard_name", "name"), &RiveMultiInstance::set_artboard_name);
     ClassDB::bind_method(D_METHOD("get_artboard_name"), &RiveMultiInstance::get_artboard_name);
@@ -32,9 +34,31 @@ void RiveMultiInstance::_bind_methods() {
 RiveMultiInstance::RiveMultiInstance() {}
 
 RiveMultiInstance::~RiveMultiInstance() {
-    artboard.reset();
-    state_machine.reset();
-    animation.reset();
+    if (rive_file_resource.is_valid()) {
+        const Callable changed_callback(this, "_on_rive_file_changed");
+        if (rive_file_resource->is_connected("changed", changed_callback)) {
+            rive_file_resource->disconnect("changed", changed_callback);
+        }
+    }
+    _release_playable_on_render_thread();
+}
+
+void RiveMultiInstance::_release_playable_on_render_thread() {
+    std::unique_ptr<rive::StateMachineInstance> old_state_machine = std::move(state_machine);
+    std::unique_ptr<rive::LinearAnimationInstance> old_animation = std::move(animation);
+    std::unique_ptr<rive::ArtboardInstance> old_artboard = std::move(artboard);
+    rive::rcp<rive::File> old_file = std::move(retained_file);
+    if (!old_state_machine && !old_animation && !old_artboard && !old_file) return;
+
+    auto release_old = [&]() {
+        old_state_machine.reset();
+        old_animation.reset();
+        old_artboard.reset();
+        old_file.reset();
+    };
+    if (!rive_integration::run_on_rive_render_thread(release_old)) {
+        release_old();
+    }
 }
 
 void RiveMultiInstance::_notification(int p_what) {
@@ -46,8 +70,35 @@ void RiveMultiInstance::_notification(int p_what) {
 }
 
 void RiveMultiInstance::set_rive_file(const Ref<RiveFile> &p_file) {
+    if (rive_file_resource == p_file) return;
+
+    const Callable changed_callback(this, "_on_rive_file_changed");
+    Ref<RiveFile> previous_file = rive_file_resource;
+    if (previous_file.is_valid() && previous_file->is_connected("changed", changed_callback)) {
+        previous_file->disconnect("changed", changed_callback);
+    }
+
     rive_file_resource = p_file;
-    _load_artboard();
+    if (rive_file_resource.is_valid() && !rive_file_resource->is_connected("changed", changed_callback)) {
+        rive_file_resource->connect("changed", changed_callback);
+    }
+
+    if (!_load_artboard()) {
+        if (rive_file_resource.is_valid() && rive_file_resource->is_connected("changed", changed_callback)) {
+            rive_file_resource->disconnect("changed", changed_callback);
+        }
+        rive_file_resource = previous_file;
+        if (rive_file_resource.is_valid() && !rive_file_resource->is_connected("changed", changed_callback)) {
+            rive_file_resource->connect("changed", changed_callback);
+        }
+    }
+    queue_redraw();
+}
+
+void RiveMultiInstance::_on_rive_file_changed() {
+    if (!_load_artboard()) {
+        UtilityFunctions::printerr("RiveMultiInstance: resource reload failed; keeping the previous playable instance.");
+    }
     queue_redraw();
 }
 
@@ -56,8 +107,12 @@ Ref<RiveFile> RiveMultiInstance::get_rive_file() const {
 }
 
 void RiveMultiInstance::set_artboard_name(const String &p_name) {
+    if (artboard_name == p_name) return;
+    String previous_name = artboard_name;
     artboard_name = p_name;
-    _load_artboard();
+    if (!_load_artboard()) {
+        artboard_name = previous_name;
+    }
     queue_redraw();
 }
 
@@ -66,8 +121,12 @@ String RiveMultiInstance::get_artboard_name() const {
 }
 
 void RiveMultiInstance::set_state_machine_name(const String &p_name) {
+    if (state_machine_name == p_name) return;
+    String previous_name = state_machine_name;
     state_machine_name = p_name;
-    _load_artboard();
+    if (!_load_artboard()) {
+        state_machine_name = previous_name;
+    }
 }
 
 String RiveMultiInstance::get_state_machine_name() const {
@@ -75,8 +134,12 @@ String RiveMultiInstance::get_state_machine_name() const {
 }
 
 void RiveMultiInstance::set_animation_name(const String &p_name) {
+    if (animation_name == p_name) return;
+    String previous_name = animation_name;
     animation_name = p_name;
-    _load_artboard();
+    if (!_load_artboard()) {
+        animation_name = previous_name;
+    }
 }
 
 String RiveMultiInstance::get_animation_name() const {
@@ -100,32 +163,64 @@ Array RiveMultiInstance::get_transforms() const {
     return transforms;
 }
 
-void RiveMultiInstance::_load_artboard() {
-    if (rive_file_resource.is_null()) return;
-    
-    artboard.reset();
-    state_machine.reset();
-    animation.reset();
+bool RiveMultiInstance::_load_artboard() {
+    if (rive_file_resource.is_null()) {
+        _release_playable_on_render_thread();
+        return true;
+    }
 
-    artboard = rive_file_resource->instantiate_artboard(artboard_name);
+    // Build a complete replacement before touching the currently playable
+    // instance. A failed resource/name change therefore leaves it intact.
+    std::unique_ptr<rive::ArtboardInstance> next_artboard = rive_file_resource->instantiate_artboard(artboard_name);
+    if (!next_artboard) {
+        UtilityFunctions::printerr("RiveMultiInstance: failed to instantiate artboard '" + artboard_name + "'.");
+        return false;
+    }
 
-    if (!artboard) return;
+    rive::rcp<rive::File> next_file;
+    if (rive::File *raw_file = rive_file_resource->get_rive_file()) {
+        // Artboard instances depend on their source file's objects. Keep the
+        // old file alive across resource hot reloads and failed replacements.
+        raw_file->ref();
+        next_file = rive::rcp<rive::File>(raw_file);
+    }
 
+    std::unique_ptr<rive::StateMachineInstance> next_state_machine;
+    std::unique_ptr<rive::LinearAnimationInstance> next_animation;
     if (!state_machine_name.is_empty()) {
-        state_machine = artboard->stateMachineNamed(state_machine_name.utf8().get_data());
-    } else if (artboard->stateMachineCount() > 0) {
-        state_machine = artboard->stateMachineAt(0); 
+        next_state_machine = next_artboard->stateMachineNamed(state_machine_name.utf8().get_data());
+        if (!next_state_machine) {
+            UtilityFunctions::printerr("RiveMultiInstance: state machine not found: " + state_machine_name);
+            return false;
+        }
+    } else if (next_artboard->stateMachineCount() > 0) {
+        next_state_machine = next_artboard->stateMachineAt(0);
     }
 
-    if (!state_machine && !animation_name.is_empty()) {
-        animation = artboard->animationNamed(animation_name.utf8().get_data());
-    } else if (!state_machine && artboard->animationCount() > 0) {
-        animation = artboard->animationAt(0);
+    if (!next_state_machine && !animation_name.is_empty()) {
+        next_animation = next_artboard->animationNamed(animation_name.utf8().get_data());
+        if (!next_animation) {
+            UtilityFunctions::printerr("RiveMultiInstance: animation not found: " + animation_name);
+            return false;
+        }
+    } else if (!next_state_machine && next_artboard->animationCount() > 0) {
+        next_animation = next_artboard->animationAt(0);
     }
-    
-    if (artboard) {
-        artboard->advance(0.0f);
+
+    if (next_state_machine) {
+        next_state_machine->advanceAndApply(0.0f);
+    } else if (next_animation) {
+        next_animation->advanceAndApply(0.0f);
+    } else {
+        next_artboard->advance(0.0f);
     }
+
+    _release_playable_on_render_thread();
+    artboard = std::move(next_artboard);
+    state_machine = std::move(next_state_machine);
+    animation = std::move(next_animation);
+    retained_file = std::move(next_file);
+    return true;
 }
 
 void RiveMultiInstance::advance(double delta) {
@@ -133,13 +228,12 @@ void RiveMultiInstance::advance(double delta) {
     if (!auto_play) return;
 
     if (state_machine) {
-        state_machine->advance(delta);
+        state_machine->advanceAndApply(delta);
     } else if (animation) {
-        animation->advance(delta);
-        animation->apply();
+        animation->advanceAndApply(delta);
+    } else {
+        artboard->advance(delta);
     }
-    
-    artboard->advance(delta);
 }
 
 void RiveMultiInstance::draw(rive::Renderer *renderer) {

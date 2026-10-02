@@ -20,8 +20,11 @@ void RiveRaw::set_bounds(const Rect2 &p_bounds) {
 }
 
 void RiveRaw::draw(rive::Renderer* renderer) {
-    if (renderer_wrapper.is_valid()) {
-        renderer_wrapper->set_renderer(renderer);
+    // A connected script can queue/free this node while the signal is being
+    // emitted. Keep the wrapper itself alive until the callback returns.
+    Ref<RiveRendererWrapper> wrapper = renderer_wrapper;
+    if (wrapper.is_valid()) {
+        wrapper->set_renderer(renderer);
         
         renderer->save();
         Transform2D xform = get_transform();
@@ -32,9 +35,9 @@ void RiveRaw::draw(rive::Renderer* renderer) {
         );
         renderer->transform(rive_transform);
         
-        emit_signal("draw_rive", renderer_wrapper);
+        emit_signal("draw_rive", wrapper);
         
         renderer->restore();
-        renderer_wrapper->set_renderer(nullptr);
+        wrapper->set_renderer(nullptr);
     }
 }

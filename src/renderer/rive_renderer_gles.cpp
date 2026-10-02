@@ -13,6 +13,7 @@
 #include <GLES3/gl3.h>
 #include <GLES3/gl3ext.h>
 
+#include "rive/renderer/texture.hpp"
 #include "rive/renderer/gl/render_context_gl_impl.hpp"
 #include "rive/renderer/gl/render_target_gl.hpp"
 #include "rive/renderer/rive_renderer.hpp"
@@ -45,6 +46,8 @@ bool create_gles_context() {
 }
 
 void cleanup_gles_context() {
+    RiveRenderRegistry::get_singleton()->set_factory(nullptr);
+    RiveRenderRegistry::get_singleton()->clear_renderer_states();
     delete g_rive_gles_context;
     g_rive_gles_context = nullptr;
 }
@@ -81,7 +84,7 @@ void render_texture_gles(RID texture_rid, RiveDrawable *drawable, uint32_t width
         renderer.save();
         // OpenGL ES origin is bottom-left; Godot textures expect top-left.
         renderer.transform(rive::Mat2D(1.0f, 0.0f, 0.0f, -1.0f, 0.0f, static_cast<float>(height)));
-        drawable->draw(&renderer);
+        drawable->replay_draw_commands(&renderer);
         renderer.restore();
     }
 

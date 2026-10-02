@@ -21,7 +21,12 @@ namespace rive_integration {
 
 struct RiveD3D12FrameState {
 	ComPtr<ID3D12CommandAllocator> command_allocator;
+	ComPtr<ID3D12Resource> intermediate_texture;
+	uint32_t intermediate_width = 0;
+	uint32_t intermediate_height = 0;
+	DXGI_FORMAT intermediate_format = DXGI_FORMAT_UNKNOWN;
 	uint64_t fence_value = 0;
+	uint64_t frame_number = 0;
 };
 
 static rive::gpu::RenderContext *g_rive_context = nullptr;
@@ -36,15 +41,42 @@ static uint32_t g_current_frame_index = 0;
 static const uint32_t kMaxFramesInFlight = 2;
 static ComPtr<ID3D12GraphicsCommandList> g_command_list;
 
-static ComPtr<ID3D12Resource> g_intermediate_texture;
-static uint32_t g_intermediate_width = 0;
-static uint32_t g_intermediate_height = 0;
+static constexpr DWORD kFenceWaitTimeoutMs = 30000;
 
-void ensure_intermediate_texture(ID3D12Device *device, uint32_t width, uint32_t height, DXGI_FORMAT format) {
-	if (g_intermediate_texture && g_intermediate_width == width && g_intermediate_height == height) {
-		return;
+void cleanup_d3d12_context();
+
+static bool wait_for_fence(uint64_t fence_value, const char *operation) {
+	if (!g_fence || !g_fence_event) {
+		UtilityFunctions::printerr("Rive: Cannot wait for D3D12 fence while ", operation, ".");
+		return false;
 	}
-	g_intermediate_texture.Reset();
+	if (g_fence->GetCompletedValue() >= fence_value) {
+		return true;
+	}
+	if (FAILED(g_fence->SetEventOnCompletion(fence_value, g_fence_event))) {
+		UtilityFunctions::printerr("Rive: Failed to arm D3D12 fence while ", operation, ".");
+		return false;
+	}
+	const DWORD wait_result = WaitForSingleObject(g_fence_event, kFenceWaitTimeoutMs);
+	if (wait_result != WAIT_OBJECT_0) {
+		UtilityFunctions::printerr("Rive: Timed out or failed waiting for D3D12 GPU while ", operation, ".");
+		return false;
+	}
+	return true;
+}
+
+static bool ensure_intermediate_texture(RiveD3D12FrameState &frame_state, ID3D12Device *device, uint32_t width, uint32_t height, DXGI_FORMAT format) {
+	if (frame_state.intermediate_texture && frame_state.intermediate_width == width &&
+		frame_state.intermediate_height == height && frame_state.intermediate_format == format) {
+		return true;
+	}
+	// The caller waits for this frame slot's fence before reaching here, so its
+	// private intermediate texture can be replaced without touching another
+	// in-flight slot.
+	frame_state.intermediate_texture.Reset();
+	frame_state.intermediate_width = 0;
+	frame_state.intermediate_height = 0;
+	frame_state.intermediate_format = DXGI_FORMAT_UNKNOWN;
 
 	D3D12_HEAP_PROPERTIES heapProps = {};
 	heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -67,16 +99,22 @@ void ensure_intermediate_texture(ID3D12Device *device, uint32_t width, uint32_t 
 		desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
 	}
 
-	device->CreateCommittedResource(
+	const HRESULT result = device->CreateCommittedResource(
 			&heapProps,
 			D3D12_HEAP_FLAG_NONE,
 			&desc,
 			D3D12_RESOURCE_STATE_COMMON,
 			nullptr,
-			IID_PPV_ARGS(&g_intermediate_texture));
+			IID_PPV_ARGS(&frame_state.intermediate_texture));
+	if (FAILED(result) || !frame_state.intermediate_texture) {
+		UtilityFunctions::printerr("Rive: Failed to create the D3D12 intermediate texture.");
+		return false;
+	}
 
-	g_intermediate_width = width;
-	g_intermediate_height = height;
+	frame_state.intermediate_width = width;
+	frame_state.intermediate_height = height;
+	frame_state.intermediate_format = format;
+	return true;
 }
 
 void transition_resource(ID3D12GraphicsCommandList *cmd_list, ID3D12Resource *resource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
@@ -94,33 +132,43 @@ void transition_resource(ID3D12GraphicsCommandList *cmd_list, ID3D12Resource *re
 
 bool create_d3d12_context(RenderingDevice* rd) {
 	if (!rd) return false;
+	cleanup_d3d12_context();
+	auto fail = []() {
+		cleanup_d3d12_context();
+		return false;
+	};
 
 	ID3D12Device* device = (ID3D12Device*)rd->get_driver_resource(RenderingDevice::DRIVER_RESOURCE_LOGICAL_DEVICE, RID(), 0);
 	if (!device) {
 		UtilityFunctions::printerr("Rive: Failed to retrieve D3D12 device.");
 		return false;
 	}
+	ID3D12CommandQueue *godot_queue = (ID3D12CommandQueue *)rd->get_driver_resource(RenderingDevice::DRIVER_RESOURCE_COMMAND_QUEUE, RID(), 0);
+	if (!godot_queue) {
+		UtilityFunctions::printerr("Rive: Failed to retrieve Godot's D3D12 command queue.");
+		return false;
+	}
+	g_command_queue = godot_queue;
 
-	g_intermediate_texture.Reset();
-	g_intermediate_width = 0;
-	g_intermediate_height = 0;
 	g_fence_value = 0;
-	g_frame_idx = 2; // Start at 2 to match Fiddle logic, maybe unneccesory.
+	g_frame_idx = 0;
+	g_current_frame_index = 0;
 
 	// Initialize frame states
 	g_frame_states.resize(kMaxFramesInFlight);
 	for (uint32_t i = 0; i < kMaxFramesInFlight; i++) {
 		if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&g_frame_states[i].command_allocator)))) {
 			UtilityFunctions::printerr("Rive: Failed to create command allocator for frame ", i);
-			return false;
+			return fail();
 		}
 		g_frame_states[i].fence_value = 0;
+		g_frame_states[i].frame_number = 0;
 	}
 
 	// Create reusable command list (using the first allocator initially)
 	if (FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g_frame_states[0].command_allocator.Get(), nullptr, IID_PPV_ARGS(&g_command_list)))) {
 		UtilityFunctions::printerr("Rive: Failed to create command list");
-		return false;
+		return fail();
 	}
 	// Command list is created in recording state, but we need to close it to use it for initialization or reset it later.
 	// However, MakeContext expects an open command list?
@@ -154,34 +202,40 @@ bool create_d3d12_context(RenderingDevice* rd) {
 
 	if (!ctx) {
 		UtilityFunctions::printerr("Rive: Failed to create RenderContext");
-		return false;
+		return fail();
+	}
+	// Publish ownership before any later fallible initialization so fail()
+	// can run the resource manager's mandatory shutdown contract.
+	g_rive_context = ctx.release();
+
+	if (FAILED(g_command_list->Close())) {
+		UtilityFunctions::printerr("Rive: Failed to close the D3D12 initialization command list.");
+		return fail();
 	}
 
-	g_command_list->Close();
-
-	D3D12_COMMAND_QUEUE_DESC queue_desc = {};
-	queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-	queue_desc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
-
-	if (FAILED(device->CreateCommandQueue(&queue_desc, IID_PPV_ARGS(&g_command_queue)))) {
-		UtilityFunctions::printerr("Rive: Failed to create command queue");
-		return false;
-	}
-
-	ID3D12CommandList* ppCommandLists[] = { g_command_list.Get() };
-	g_command_queue->ExecuteCommandLists(1, ppCommandLists);
-	
 	if (FAILED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&g_fence)))) {
 		UtilityFunctions::printerr("Rive: Failed to create fence");
-		return false;
+		return fail();
 	}
 	g_fence_event = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+	if (!g_fence_event) {
+		UtilityFunctions::printerr("Rive: Failed to create D3D12 fence event.");
+		return fail();
+	}
+
+	// Create every synchronization primitive before submitting the context's
+	// initialization list. Otherwise an allocation failure here could leave GPU
+	// work in flight with no fence available for safe teardown.
+	ID3D12CommandList* ppCommandLists[] = { g_command_list.Get() };
+	g_command_queue->ExecuteCommandLists(1, ppCommandLists);
 
 	g_fence_value++;
-	g_command_queue->Signal(g_fence.Get(), g_fence_value);
-	if (g_fence->GetCompletedValue() < g_fence_value) {
-		g_fence->SetEventOnCompletion(g_fence_value, g_fence_event);
-		WaitForSingleObject(g_fence_event, INFINITE);
+	if (FAILED(g_command_queue->Signal(g_fence.Get(), g_fence_value))) {
+		UtilityFunctions::printerr("Rive: Failed to signal the D3D12 initialization fence.");
+		return fail();
+	}
+	if (!wait_for_fence(g_fence_value, "initializing the renderer")) {
+		return fail();
 	}
 
 	// Reset the command list and allocator for the first frame usage?
@@ -191,14 +245,13 @@ bool create_d3d12_context(RenderingDevice* rd) {
 	// We just executed it. We should probably wait for it to finish (which we did with the fence above).
 	// So it's safe to reset in render_texture.
 
-	g_rive_context = ctx.release();
 	RiveRenderRegistry::get_singleton()->set_factory(g_rive_context);
 
 	return true;
 }
 
 void render_texture_d3d12(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height) {
-	if (!g_rive_context || !g_command_queue) {
+	if (!g_rive_context || !g_command_queue || !g_fence || !g_fence_event || !g_command_list || g_frame_states.size() != kMaxFramesInFlight) {
 		return;
 	}
 	if (!rd || !drawable) {
@@ -212,14 +265,18 @@ void render_texture_d3d12(RenderingDevice *rd, RID texture_rid, RiveDrawable *dr
 	if (!device) {
 		return;
 	}
+	ID3D12Resource *image = (ID3D12Resource *)rd->get_driver_resource(RenderingDevice::DRIVER_RESOURCE_TEXTURE, texture_rid, 0);
+	if (!image) {
+		UtilityFunctions::printerr("Rive: Failed to retrieve the D3D12 target texture.");
+		return;
+	}
 
 	// Get current frame state
 	RiveD3D12FrameState &frame_state = g_frame_states[g_current_frame_index];
 
 	// Wait for the previous usage of this frame's allocator to finish
-	if (frame_state.fence_value != 0 && g_fence->GetCompletedValue() < frame_state.fence_value) {
-		g_fence->SetEventOnCompletion(frame_state.fence_value, g_fence_event);
-		WaitForSingleObject(g_fence_event, INFINITE);
+	if (frame_state.fence_value != 0 && !wait_for_fence(frame_state.fence_value, "reusing a frame allocator")) {
+		return;
 	}
 
 	// Reset allocator and command list
@@ -232,22 +289,23 @@ void render_texture_d3d12(RenderingDevice *rd, RID texture_rid, RiveDrawable *dr
 		return;
 	}
 
-	ID3D12Resource *image = (ID3D12Resource *)rd->get_driver_resource(RenderingDevice::DRIVER_RESOURCE_TEXTURE, texture_rid, 0);
-
 	if (image) {
 		D3D12_RESOURCE_DESC desc = image->GetDesc();
 		bool needs_workaround = (desc.Format == DXGI_FORMAT_R8G8B8A8_TYPELESS || desc.Format == DXGI_FORMAT_B8G8R8A8_TYPELESS);
 		ID3D12Resource *target_resource = image;
 
 		if (needs_workaround) {
-			ensure_intermediate_texture(device, width, height, desc.Format);
-			if (g_intermediate_texture) {
+			if (!ensure_intermediate_texture(frame_state, device, width, height, desc.Format)) {
+				g_command_list->Close();
+				return;
+			}
+			if (frame_state.intermediate_texture) {
 				transition_resource(g_command_list.Get(), image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE);
-				transition_resource(g_command_list.Get(), g_intermediate_texture.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
-				g_command_list->CopyResource(g_intermediate_texture.Get(), image);
-				transition_resource(g_command_list.Get(), g_intermediate_texture.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON);
+				transition_resource(g_command_list.Get(), frame_state.intermediate_texture.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_DEST);
+				g_command_list->CopyResource(frame_state.intermediate_texture.Get(), image);
+				transition_resource(g_command_list.Get(), frame_state.intermediate_texture.Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_COMMON);
 				transition_resource(g_command_list.Get(), image, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-				target_resource = g_intermediate_texture.Get();
+				target_resource = frame_state.intermediate_texture.Get();
 			}
 		} else {
 			transition_resource(g_command_list.Get(), image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON);
@@ -265,11 +323,15 @@ void render_texture_d3d12(RenderingDevice *rd, RID texture_rid, RiveDrawable *dr
 		rive::rcp<rive::gpu::RenderTargetD3D12> rtarget = impl->makeRenderTarget(width, height);
 
 		if (rtarget) {
-			rtarget->setTargetTexture(ComPtr<ID3D12Resource>(target_resource));
+			rtarget->setTargetTexture(ComPtr<ID3D12Resource>(target_resource)
+#if defined(RIVE_GODOT_D3D12_EXTERNAL_STATE)
+			                         , D3D12_RESOURCE_STATE_COMMON
+#endif
+			);
 
 			{
 				rive::RiveRenderer renderer(g_rive_context);
-				drawable->draw(&renderer);
+				drawable->replay_draw_commands(&renderer);
 			}
 
 			g_frame_idx++;
@@ -282,32 +344,39 @@ void render_texture_d3d12(RenderingDevice *rd, RID texture_rid, RiveDrawable *dr
 			fr.renderTarget = rtarget.get();
 			fr.externalCommandBuffer = &command_lists;
 			fr.currentFrameNumber = g_frame_idx;
-			fr.safeFrameNumber = (g_frame_idx > 2) ? g_frame_idx - 2 : 0;
+			fr.safeFrameNumber = frame_state.frame_number;
 
 			g_rive_context->flush(fr);
 		}
 
-		if (needs_workaround && g_intermediate_texture) {
-			transition_resource(g_command_list.Get(), g_intermediate_texture.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE);
+		if (needs_workaround && frame_state.intermediate_texture) {
+			transition_resource(g_command_list.Get(), frame_state.intermediate_texture.Get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_COPY_SOURCE);
 			transition_resource(g_command_list.Get(), image, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
-			g_command_list->CopyResource(image, g_intermediate_texture.Get());
+			g_command_list->CopyResource(image, frame_state.intermediate_texture.Get());
 			transition_resource(g_command_list.Get(), image, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-			transition_resource(g_command_list.Get(), g_intermediate_texture.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
+			transition_resource(g_command_list.Get(), frame_state.intermediate_texture.Get(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_COMMON);
 		} else {
 			transition_resource(g_command_list.Get(), image, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 		}
 	}
 
-	g_command_list->Close();
+	if (FAILED(g_command_list->Close())) {
+		UtilityFunctions::printerr("Rive: Failed to close the D3D12 render command list.");
+		return;
+	}
 
 	ID3D12CommandList *ppCommandLists[] = { g_command_list.Get() };
 	g_command_queue->ExecuteCommandLists(1, ppCommandLists);
 
 	g_fence_value++;
-	g_command_queue->Signal(g_fence.Get(), g_fence_value);
+	if (FAILED(g_command_queue->Signal(g_fence.Get(), g_fence_value))) {
+		UtilityFunctions::printerr("Rive: Failed to signal the D3D12 render fence.");
+		return;
+	}
 
 	// Store the fence value for this frame so we can wait for it next time we use this slot
 	frame_state.fence_value = g_fence_value;
+	frame_state.frame_number = g_frame_idx;
 
 	// Advance frame index
 	g_current_frame_index = (g_current_frame_index + 1) % kMaxFramesInFlight;
@@ -317,24 +386,35 @@ void cleanup_d3d12_context() {
 	if (g_command_queue && g_fence && g_fence_event) {
 		// Wait for GPU to finish all work
 		g_fence_value++;
-		g_command_queue->Signal(g_fence.Get(), g_fence_value);
-		g_fence->SetEventOnCompletion(g_fence_value, g_fence_event);
-		WaitForSingleObject(g_fence_event, INFINITE);
+		if (SUCCEEDED(g_command_queue->Signal(g_fence.Get(), g_fence_value))) {
+			wait_for_fence(g_fence_value, "shutting down the renderer");
+		}
 	}
 
-	// Release Rive context first
+	// Render targets hold backend objects owned by the context and must be
+	// released before the context itself.
+	RiveRenderRegistry::get_singleton()->clear_renderer_states();
+	RiveRenderRegistry::get_singleton()->set_factory(nullptr);
 	if (g_rive_context) {
+		// D3D12 GPU resources are held in a deferred-deletion purgatory. The
+		// manager contract requires an explicit shutdown before destruction.
+		rive::gpu::RenderContextD3D12Impl *impl =
+			g_rive_context->static_impl_cast<rive::gpu::RenderContextD3D12Impl>();
+		if (impl && impl->manager()) {
+			impl->manager()->shutdown();
+		}
 		delete g_rive_context;
 		g_rive_context = nullptr;
 	}
-	RiveRenderRegistry::get_singleton()->set_factory(nullptr);
 
 	// Release D3D12 resources
-	g_intermediate_texture.Reset();
 	g_command_list.Reset();
 	g_frame_states.clear();
 	g_command_queue.Reset();
 	g_fence.Reset();
+	g_fence_value = 0;
+	g_frame_idx = 0;
+	g_current_frame_index = 0;
 
 	if (g_fence_event) {
 		CloseHandle(g_fence_event);

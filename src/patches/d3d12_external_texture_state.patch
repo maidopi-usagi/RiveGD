@@ -1,0 +1,39 @@
+diff --git a/renderer/include/rive/renderer/d3d12/render_context_d3d12_impl.hpp b/renderer/include/rive/renderer/d3d12/render_context_d3d12_impl.hpp
+index c466483..0a08965 100644
+--- a/renderer/include/rive/renderer/d3d12/render_context_d3d12_impl.hpp
++++ b/renderer/include/rive/renderer/d3d12/render_context_d3d12_impl.hpp
+@@ -23,7 +23,9 @@ public:
+     ~RenderTargetD3D12() override {}
+ 
+     void setTargetTexture(rcp<D3D12Texture> tex);
+-    void setTargetTexture(ComPtr<ID3D12Resource> tex);
++    void setTargetTexture(
++        ComPtr<ID3D12Resource> tex,
++        D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_PRESENT);
+     void releaseTexturesImmediately()
+     {
+         if (m_targetTexture)
+diff --git a/renderer/src/d3d12/render_context_d3d12_impl.cpp b/renderer/src/d3d12/render_context_d3d12_impl.cpp
+index 113f0bb..cc2d993 100644
+--- a/renderer/src/d3d12/render_context_d3d12_impl.cpp
++++ b/renderer/src/d3d12/render_context_d3d12_impl.cpp
+@@ -406,7 +406,9 @@ void RenderTargetD3D12::setTargetTexture(rcp<D3D12Texture> tex)
+     SNAME_D3D12_OBJECT(m_targetTexture, "color");
+ }
+ 
+-void RenderTargetD3D12::setTargetTexture(ComPtr<ID3D12Resource> tex)
++void RenderTargetD3D12::setTargetTexture(
++    ComPtr<ID3D12Resource> tex,
++    D3D12_RESOURCE_STATES initialState)
+ {
+     if (tex)
+     {
+@@ -430,7 +432,7 @@ void RenderTargetD3D12::setTargetTexture(ComPtr<ID3D12Resource> tex)
+     }
+ 
+     m_targetTexture =
+-        m_manager->makeExternalTexture(tex, D3D12_RESOURCE_STATE_PRESENT);
++        m_manager->makeExternalTexture(tex, initialState);
+     SNAME_D3D12_OBJECT(m_targetTexture, "colorExternal");
+ }
+ 

@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 import os
-from glob import glob
 import urllib.request
 import zipfile
 import io
 import shutil
 import re
 import tempfile
+import hashlib
 
 Import("env")
 
@@ -17,19 +17,66 @@ rive_env = env.Clone()
 rive_dir = os.path.join(Dir(".").abspath, "rive-runtime")
 deps_dir = os.path.join(rive_dir, "dependencies")
 
+# Keep the recorder compatible with Rive revisions that expose
+# Renderer::modulateOpacity(), without relying on a global Git safe-directory.
+renderer_header = os.path.join(rive_dir, "include", "rive", "renderer.hpp")
+try:
+    with open(renderer_header, "r", encoding="utf-8") as header:
+        if "virtual void modulateOpacity(float opacity)" in header.read():
+            rive_env.Append(CPPDEFINES=["RIVE_GODOT_HAS_MODULATE_OPACITY"])
+except OSError as exc:
+    raise RuntimeError(f"Could not inspect Rive renderer API: {renderer_header}") from exc
+
 # --- Install Dependencies (HarfBuzz & SheenBidi) ---
-harfbuzz_dir = os.path.join(deps_dir, "harfbuzz")
+# Version the upgraded dependency caches so older local builds remain recoverable.
+harfbuzz_dir = os.path.join(deps_dir, "harfbuzz-08d34675f64b")
 sheenbidi_dir = os.path.join(deps_dir, "sheenbidi")
-yoga_dir = os.path.join(deps_dir, "yoga")
+yoga_dir = os.path.join(deps_dir, "yoga-dd288d29db01")
 miniaudio_dir = os.path.join(deps_dir, "miniaudio")
-libpng_dir = os.path.join(deps_dir, "libpng")
+libpng_dir = os.path.join(deps_dir, "libpng-1f1a50134680")
 zlib_dir = os.path.join(deps_dir, "zlib")
 libjpeg_dir = os.path.join(deps_dir, "libjpeg")
 libwebp_dir = os.path.join(deps_dir, "libwebp")
 
-def install_dependency(name, url, target_dir, retries=4):
+def install_dependency(name, url, sha256, target_dir, retries=4):
+    source_marker = os.path.join(target_dir, ".rivegd-source.sha256")
     if os.path.exists(target_dir):
+        if os.path.isfile(source_marker):
+            with open(source_marker, "r", encoding="ascii") as marker:
+                installed_sha256 = marker.read().strip()
+            if installed_sha256 == sha256:
+                return
+            raise RuntimeError(
+                f"Existing {name} dependency marker does not match the pinned archive. "
+                f"Move {target_dir} aside and rebuild."
+            )
+        # Preserve dependencies created by older revisions. They cannot be
+        # authenticated retroactively, so do not invent a marker for them.
+        print(
+            f"RIVE: WARNING: Using unverified legacy {name} dependency at {target_dir}. "
+            "Move it aside and rebuild to install the pinned, verified archive."
+        )
         return
+
+    if not url.startswith("https://codeload.github.com/"):
+        raise RuntimeError(f"Refusing non-codeload dependency URL for {name}: {url}")
+    target_parent = os.path.dirname(target_dir)
+    os.makedirs(target_parent, exist_ok=True)
+
+    def safe_extract(archive, destination):
+        destination_real = os.path.realpath(destination)
+        members = archive.infolist()
+        if not members:
+            raise ValueError(f"Archive for {name} is empty")
+        roots = {member.filename.split("/", 1)[0] for member in members}
+        if len(roots) != 1 or "" in roots:
+            raise ValueError(f"Archive for {name} does not have one root directory")
+        for member in members:
+            member_real = os.path.realpath(os.path.join(destination, member.filename))
+            if os.path.commonpath((destination_real, member_real)) != destination_real:
+                raise ValueError(f"Archive for {name} contains an unsafe path")
+        archive.extractall(destination)
+        return roots.pop()
 
     import time
     last_err = None
@@ -39,15 +86,22 @@ def install_dependency(name, url, target_dir, retries=4):
             req = urllib.request.Request(url, headers={"User-Agent": "RiveGD-CI"})
             with urllib.request.urlopen(req, timeout=120) as response:
                 data = response.read()
-            with zipfile.ZipFile(io.BytesIO(data)) as z:
-                root = z.namelist()[0].split('/')[0]
-                z.extractall(deps_dir)
-                extracted_path = os.path.join(deps_dir, root)
-                if os.path.exists(target_dir):
-                    shutil.rmtree(target_dir)
+            actual_sha256 = hashlib.sha256(data).hexdigest()
+            if actual_sha256 != sha256:
+                raise ValueError(
+                    f"SHA-256 mismatch for {name}: expected {sha256}, got {actual_sha256}"
+                )
+            # Keep extraction on the target volume so os.rename remains atomic
+            # when Windows TEMP and the checkout are on different drives.
+            with tempfile.TemporaryDirectory(prefix="rivegd-dependency-", dir=target_parent) as extract_dir:
+                with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                    root = safe_extract(archive, extract_dir)
+                extracted_path = os.path.join(extract_dir, root)
                 os.rename(extracted_path, target_dir)
-                print(f"RIVE: Installed {name} to {target_dir}")
-                return
+            with open(source_marker, "w", encoding="ascii", newline="\n") as marker:
+                marker.write(sha256 + "\n")
+            print(f"RIVE: Installed {name} to {target_dir}")
+            return
         except Exception as e:
             last_err = e
             print(f"RIVE: Attempt {attempt} failed for {name}: {e}")
@@ -58,14 +112,14 @@ def install_dependency(name, url, target_dir, retries=4):
     print(f"RIVE: Failed to install {name} after {retries} attempts: {last_err}")
     Exit(1)
 
-install_dependency("HarfBuzz", "https://github.com/rive-app/harfbuzz/archive/refs/heads/rive_10.1.0.zip", harfbuzz_dir)
-install_dependency("SheenBidi", "https://github.com/Tehreer/SheenBidi/archive/refs/tags/v2.6.zip", sheenbidi_dir)
-install_dependency("Yoga", "https://github.com/rive-app/yoga/archive/refs/heads/rive_changes_v2_0_1_2.zip", yoga_dir)
-install_dependency("Miniaudio", "https://github.com/rive-app/miniaudio/archive/refs/heads/rive_changes_5.zip", miniaudio_dir)
-install_dependency("LibPNG", "https://github.com/glennrp/libpng/archive/refs/heads/libpng16.zip", libpng_dir)
-install_dependency("ZLib", "https://github.com/madler/zlib/archive/refs/tags/v1.3.1.zip", zlib_dir)
-install_dependency("LibJPEG", "https://github.com/rive-app/libjpeg/archive/refs/tags/v9f.zip", libjpeg_dir)
-install_dependency("LibWebP", "https://github.com/webmproject/libwebp/archive/refs/tags/v1.4.0.zip", libwebp_dir)
+install_dependency("HarfBuzz", "https://codeload.github.com/rive-app/harfbuzz/zip/08d34675f64b1ac4880f4f10c9fd474a56dd4399", "895da10ea61d204ce09c1d0bdca487eb580a0739ec25b0f44fa54fddddff1802", harfbuzz_dir)
+install_dependency("SheenBidi", "https://codeload.github.com/Tehreer/SheenBidi/zip/adfccc46504b1be37b8894f064121c56c31312f7", "53652cb962dae39bb58b0b9bfb07b7c60b1576631164ac40750b93d6471a26e3", sheenbidi_dir)
+install_dependency("Yoga", "https://codeload.github.com/rive-app/yoga/zip/dd288d29db01ba9da03d0c3684c00e6ae74e6e61", "25f1e7edda7b8dfff4dbd847d8306081dc0dbc67eee6912f44d9b5242ae5bbdd", yoga_dir)
+install_dependency("Miniaudio", "https://codeload.github.com/rive-app/miniaudio/zip/3a8b070f80e203a35ec763c5118da20805a90d5a", "1fd99f980c9d056c9dcfdee600ddddf3f1a62b955ebcdb422804adcaf7995df8", miniaudio_dir)
+install_dependency("LibPNG", "https://codeload.github.com/glennrp/libpng/zip/1f1a501346800e9660d3039a6efbf90b685b5d97", "bcc332dc24968fddda33742ed52316fad3f96f53adaf6724d429152127c4d964", libpng_dir)
+install_dependency("ZLib", "https://codeload.github.com/madler/zlib/zip/51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf", "8be92f276c1280aa4f46a878008c7bf295b6ca8da0eb27b41e3666d894f0d32c", zlib_dir)
+install_dependency("LibJPEG", "https://codeload.github.com/rive-app/libjpeg/zip/2f995b502f6ea31cb130d93b5661bf468c114e19", "782a72878da3ecfce4619d72f15d1b60d8c38303f0a4bea4cf1391b202236369", libjpeg_dir)
+install_dependency("LibWebP", "https://codeload.github.com/webmproject/libwebp/zip/845d5476a866141ba35ac133f856fa62f0b7445f", "1745e44c510c4f4119f154dc3f09c10c3e272b28225b8af32988ff224f3e492e", libwebp_dir)
 
 # --- Preprocess Generated Shaders (Fix C2026) ---
 def preprocess_generated_shaders(env, rive_dir):
@@ -151,7 +205,8 @@ def preprocess_generated_shaders(env, rive_dir):
 preprocess_generated_shaders(rive_env, rive_dir)
 
 # --- Generate pnglibconf.h ---
-pnglibconf_h = os.path.join(rive_dir, "include", "libpng", "pnglibconf.h")
+png_config_dir = os.path.join(libpng_dir, "rivegd-config")
+pnglibconf_h = os.path.join(png_config_dir, "pnglibconf.h")
 if not os.path.exists(pnglibconf_h):
     print("RIVE: Generating pnglibconf.h...")
     os.makedirs(os.path.dirname(pnglibconf_h), exist_ok=True)
@@ -172,7 +227,7 @@ rive_env.Append(CPPPATH=[
     miniaudio_dir,
     libpng_dir,
     zlib_dir,
-    os.path.join(rive_dir, "include", "libpng"), # For generated pnglibconf.h
+    png_config_dir,
     libjpeg_dir,
     libwebp_dir,
     os.path.join(libwebp_dir, "src"),
@@ -184,23 +239,6 @@ rive_env.Append(CPPDEFINES=[
     'WITH_RIVE_LAYOUT', 'YOGA_EXPORT=',
     'WITH_RIVE_AUDIO', 'MA_NO_RESOURCE_MANAGER',
     'RIVE_PNG', 'RIVE_JPEG', 'RIVE_WEBP', 'RIVE_DECODERS',
-    'HB_ONLY_ONE_SHAPER',
-    'HAVE_OT',
-    'HB_NO_FALLBACK_SHAPE',
-    'HB_NO_WIN1256',
-    'HB_NO_EXTERN_HELPERS',
-    'HB_DISABLE_DEPRECATED',
-    'HB_NO_BITMAP',
-    'HB_NO_BUFFER_SERIALIZE',
-    'HB_NO_BUFFER_VERIFY',
-    'HB_NO_BUFFER_MESSAGE',
-    'HB_NO_SETLOCALE',
-    'HB_NO_VERTICAL',
-    'HB_NO_LAYOUT_COLLECT_GLYPHS',
-    'HB_NO_LAYOUT_RARELY_USED',
-    'HB_NO_LAYOUT_UNUSED',
-    'HB_NO_MMAP',
-    'HB_NO_META',
     'SB_CONFIG_UNITY'
 ])
 # Desktop GL is not available on Android; Vulkan is used there instead.
@@ -236,13 +274,20 @@ if rive_env["platform"] == "macos":
     rive_env.Append(CCFLAGS=["-fobjc-arc"])
     rive_env.Append(FRAMEWORKS=["Metal", "Foundation", "QuartzCore", "AppKit", "CoreGraphics", "CoreText", "AudioToolbox"])
     rive_env.Append(CPPDEFINES=["RIVE_METAL"])
-elif rive_env["platform"] in ["windows", "linuxbsd", "android"]:
-    rive_env.Append(CPPDEFINES=["RIVE_VULKAN", "RIVE_UPSTREAM_VULKAN_IMPL", "VULKAN_ENABLED"])
+elif rive_env["platform"] in ["windows", "linux", "android"]:
+    rive_env.Append(CPPDEFINES=[
+        "RIVE_VULKAN", "RIVE_UPSTREAM_VULKAN_IMPL", "VULKAN_ENABLED",
+        "VK_NO_PROTOTYPES", "VMA_STATIC_VULKAN_FUNCTIONS=0",
+        "VMA_DYNAMIC_VULKAN_FUNCTIONS=1",
+    ])
+    # Match upstream: atomic shaders are enabled on desktop, opt-in on Android.
+    if rive_env["platform"] != "android":
+        rive_env.Append(CPPDEFINES=["WITH_VULKAN_ATOMICS"])
 
     # Pick up VULKAN_SDK headers on Windows + Linux (LunarG ships modern Vulkan headers
     # the system packages may be too old for, e.g. VK_ARM_format_pack added in 1.4.318).
     vulkan_sdk = os.environ.get("VULKAN_SDK")
-    if vulkan_sdk and rive_env["platform"] in ["windows", "linuxbsd", "android"]:
+    if vulkan_sdk and rive_env["platform"] in ["windows", "linux", "android"]:
         # LunarG SDK uses 'Include' on Windows, 'include' on Linux.
         for inc_name in ("Include", "include"):
             inc_dir = os.path.join(vulkan_sdk, inc_name)
@@ -263,16 +308,17 @@ elif rive_env["platform"] in ["windows", "linuxbsd", "android"]:
                 rive_env.Append(LIBPATH=[lib_dir])
                 break
 
+    if rive_env["platform"] == "linux":
+        # RiveGD loads Vulkan and OpenGL entry points at runtime with dlopen.
+        rive_env.Append(LIBS=["dl"])
+
     if rive_env["platform"] == "windows":
         # D3D12 configuration (Windows only)
-        rive_env.Append(CPPDEFINES=["RIVE_D3D12", "D3D12_ENABLED", "_USE_MATH_DEFINES", "NOMINMAX"])
-        rive_env.Append(CXXFLAGS=["/std:c++20"])
+        rive_env.Append(CPPDEFINES=["RIVE_D3D12", "D3D12_ENABLED", "RIVE_GODOT_D3D12_EXTERNAL_STATE", "_USE_MATH_DEFINES", "NOMINMAX"])
+        rive_env.Append(CXXFLAGS=["/std:c++20", "/bigobj"])
         
         # Link system libraries
-        rive_env.Append(LIBS=["d3d12", "dxgi", "d3dcompiler", "opengl32", "vulkan-1", "dxguid", "uuid", "delayimp"])
-        
-        # Delay load Vulkan to avoid crash if missing
-        rive_env.Append(LINKFLAGS=["/DELAYLOAD:vulkan-1.dll"])
+        rive_env.Append(LIBS=["d3d12", "dxgi", "d3dcompiler", "opengl32", "dxguid", "uuid"])
 
         # Prioritize Godot build deps for D3DX12
         local_app_data = os.environ.get("LOCALAPPDATA")
@@ -306,14 +352,14 @@ dirs_to_scan = [
     os.path.join(rive_dir, 'renderer', 'src')
 ]
 
-exclude_dir_names = {'d3d', 'd3d11', 'd3d12', 'vulkan', 'webgpu', 'dawn', 'android', 'ios'}
+exclude_dir_names = {'d3d', 'd3d11', 'd3d12', 'vulkan', 'webgpu', 'dawn', 'android', 'ios', 'ore'}
 if rive_env["platform"] != "macos":
     exclude_dir_names.add('metal')
 else:
     # macOS: explicitly exclude all D3D directories
     exclude_dir_names.update({'d3d', 'd3d11', 'd3d12'})
 
-if rive_env["platform"] in ["windows", "linuxbsd", "android"]:
+if rive_env["platform"] in ["windows", "linux", "android"]:
     if 'vulkan' in exclude_dir_names: exclude_dir_names.remove('vulkan')
 
 if rive_env["platform"] == "windows":
@@ -330,10 +376,9 @@ for d in dirs_to_scan:
                 if f == "load_gles_extensions.cpp" and rive_env["platform"] != "android":
                     continue
                 
-                # pls_impl_webgl.cpp uses ANGLE/WebGL extensions that don't exist on
-                # any native platform (Android, desktop, etc.).  It is only valid for
-                # Emscripten / WebGL builds which this project does not support.
-                if f == "pls_impl_webgl.cpp":
+                # Upstream also uses this implementation for desktop ANGLE.
+                # Android lacks the desktop GLAD entry points for that path.
+                if f == "pls_impl_webgl.cpp" and rive_env["platform"] == "android":
                     continue
                 
                 rive_sources.append(os.path.join(root, f))
@@ -367,62 +412,48 @@ if rive_env["platform"] != "android":
     rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "src", "gles2.c"))
     rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "src", "egl.c"))
 
-# Add HarfBuzz and SheenBidi sources
-harfbuzz_sources = glob(os.path.join(harfbuzz_dir, "src", "*.cc"))
-harfbuzz_sources.extend(glob(os.path.join(harfbuzz_dir, "src", "graph", "*.cc")))
-harfbuzz_sources.extend(glob(os.path.join(harfbuzz_dir, "src", "OT", "Var", "VARC", "*.cc")))
+# Follow the source lists from this pinned Rive revision rather than compiling
+# dependency aggregators, tests, and removed HarfBuzz subset/graph implementations.
+def dependency_build_config(name):
+    path = os.path.join(deps_dir, f"premake5_{name}_v2.lua")
+    with open(path, "r", encoding="utf-8") as config:
+        return config.read()
 
-filtered_hb_sources = []
-excluded_hb_files = {
-    "harfbuzz.cc",
-    "harfbuzz-subset.cc",
-    "main.cc",
-    "hb-icu.cc",
-    "hb-glib.cc",
-    "hb-gobject-structs.cc",
-    "hb-cairo.cc",
-    "hb-cairo-utils.cc",
-    "hb-graphite2.cc",
-    "hb-uniscribe.cc",
-    "hb-gdi.cc",
-    "hb-directwrite.cc",
-    "hb-wasm-api.cc",
-    "hb-wasm-shape.cc",
-    "test-classdef-graph.cc", # Exclude test file in graph/
-}
-
-for s in harfbuzz_sources:
-    name = os.path.basename(str(s))
-    if name in excluded_hb_files:
-        continue
-    if "hb-coretext" in name:
-        if rive_env["platform"] != "macos":
+def dependency_sources(name, directory, extension):
+    config = dependency_build_config(name)
+    pattern = (
+        r"^\s*" + re.escape(name) + r"\s*\.\.\s*'(/[^']+\."
+        + re.escape(extension) + r")'\s*,?\s*$"
+    )
+    sources = list(dict.fromkeys(re.findall(pattern, config, flags=re.MULTILINE)))
+    if not sources:
+        raise RuntimeError(f"No {name} sources found in the pinned Rive build configuration")
+    result = []
+    for relative_path in sources:
+        if name == "harfbuzz" and "hb-coretext" in relative_path and rive_env["platform"] != "macos":
             continue
-    if "test" in name: 
-        continue
-    filtered_hb_sources.append(s)
+        path = os.path.join(directory, relative_path.lstrip("/"))
+        if not os.path.isfile(path):
+            raise RuntimeError(f"Missing pinned {name} source: {path}")
+        result.append(path)
+    return result
 
+harfbuzz_config = dependency_build_config("harfbuzz")
+harfbuzz_defines_block = re.search(r"\bdefines\s*\(\s*\{(.*?)\}\s*\)", harfbuzz_config, flags=re.DOTALL)
+if not harfbuzz_defines_block:
+    raise RuntimeError("Could not read the pinned HarfBuzz compile definitions")
+harfbuzz_defines = re.findall(r"^\s*'([^']+)'", harfbuzz_defines_block.group(1), flags=re.MULTILINE)
+if not harfbuzz_defines:
+    raise RuntimeError("The pinned HarfBuzz compile definitions are empty")
+rive_env.Append(CPPDEFINES=harfbuzz_defines)
 if rive_env["platform"] == "macos":
-     rive_env.Append(CPPDEFINES=['HAVE_CORETEXT'])
+    rive_env.Append(CPPDEFINES=['HAVE_CORETEXT'])
 
-rive_sources.extend(filtered_hb_sources)
+rive_sources.extend(dependency_sources("harfbuzz", harfbuzz_dir, "cc"))
 rive_sources.append(os.path.join(sheenbidi_dir, "Source", "SheenBidi.c"))
 
 # Add Yoga sources
-yoga_sources = [
-    os.path.join(yoga_dir, "yoga", "Utils.cpp"),
-    os.path.join(yoga_dir, "yoga", "YGConfig.cpp"),
-    os.path.join(yoga_dir, "yoga", "YGLayout.cpp"),
-    os.path.join(yoga_dir, "yoga", "YGEnums.cpp"),
-    os.path.join(yoga_dir, "yoga", "YGNodePrint.cpp"),
-    os.path.join(yoga_dir, "yoga", "YGNode.cpp"),
-    os.path.join(yoga_dir, "yoga", "YGValue.cpp"),
-    os.path.join(yoga_dir, "yoga", "YGStyle.cpp"),
-    os.path.join(yoga_dir, "yoga", "Yoga.cpp"),
-    os.path.join(yoga_dir, "yoga", "event", "event.cpp"),
-    os.path.join(yoga_dir, "yoga", "log.cpp"),
-]
-rive_sources.extend(yoga_sources)
+rive_sources.extend(dependency_sources("yoga", yoga_dir, "cpp"))
 
 # Add Miniaudio sources
 if rive_env["platform"] == "ios":

@@ -1,21 +1,29 @@
 diff --git a/renderer/src/gl/render_buffer_gl_impl.cpp b/renderer/src/gl/render_buffer_gl_impl.cpp
-index 649f6e4d..62793fb5 100644
+index 649f6e4..ea4b459 100644
 --- a/renderer/src/gl/render_buffer_gl_impl.cpp
 +++ b/renderer/src/gl/render_buffer_gl_impl.cpp
-@@ -110,7 +110,7 @@ bool RenderBufferGLImpl::canMapBuffer() const
+@@ -108,13 +108,9 @@ void RenderBufferGLImpl::onUnmap()
+ #ifndef RIVE_WEBGL
+ bool RenderBufferGLImpl::canMapBuffer() const
  {
-     // WebGL doesn't support buffer mapping. Don't use it on ANGLE either since
-     // we don't trust ANGLE with features that haven't been validated by WebGL.
+-    // WebGL doesn't support buffer mapping. Don't use it on ANGLE either since
+-    // we don't trust ANGLE with features that haven't been validated by WebGL.
 -    return !m_state->capabilities().isANGLESystemDriver &&
-+    return false && !m_state->capabilities().isANGLESystemDriver &&
-            // NVIDIA gives performance warnings when mapping GL_STATIC_DRAW
-            // buffers.
-            !enums::is_flag_set(flags(),
+-           // NVIDIA gives performance warnings when mapping GL_STATIC_DRAW
+-           // buffers.
+-           !enums::is_flag_set(flags(),
+-                               RenderBufferFlags::mappedOnceAtInitialization);
++    // Godot shares the GL context and buffer bindings with the renderer. Use
++    // the shadow-buffer upload path to avoid leaving a shared buffer mapped.
++    return false;
+ }
+ #endif
+ } // namespace rive::gpu
 diff --git a/renderer/src/gl/render_context_gl_impl.cpp b/renderer/src/gl/render_context_gl_impl.cpp
-index aefc4dd4..70df9612 100644
+index 1f0c904..9b4ad6d 100644
 --- a/renderer/src/gl/render_context_gl_impl.cpp
 +++ b/renderer/src/gl/render_context_gl_impl.cpp
-@@ -224,10 +224,11 @@ RenderContextGLImpl::RenderContextGLImpl(
+@@ -271,10 +271,14 @@ RenderContextGLImpl::RenderContextGLImpl(
                                                std::size(colorRampSources),
                                                m_capabilities);
      m_colorRampProgram.link();
@@ -24,50 +32,82 @@ index aefc4dd4..70df9612 100644
 -        glGetUniformBlockIndex(m_colorRampProgram, GLSL_FlushUniforms),
 -        FLUSH_UNIFORM_BUFFER_IDX);
 +    {
-+        GLuint blockIndex = glGetUniformBlockIndex(m_colorRampProgram, GLSL_FlushUniforms);
++        GLuint blockIndex =
++            glGetUniformBlockIndex(m_colorRampProgram, GLSL_FlushUniforms);
 +        if (blockIndex != GL_INVALID_INDEX)
-+            glUniformBlockBinding(m_colorRampProgram, blockIndex, FLUSH_UNIFORM_BUFFER_IDX);
++            glUniformBlockBinding(m_colorRampProgram,
++                                  blockIndex,
++                                  FLUSH_UNIFORM_BUFFER_IDX);
 +    }
- 
+
      m_state->bindVAO(m_colorRampVAO);
      glEnableVertexAttribArray(0);
-@@ -288,10 +289,11 @@ RenderContextGLImpl::RenderContextGLImpl(
+@@ -335,10 +339,14 @@ RenderContextGLImpl::RenderContextGLImpl(
      glutils::Uniform1iByName(m_tessellateProgram,
-                              GLSL_featherTexture,
-                              FEATHER_TEXTURE_IDX);
+                              GLSL_gaussianIntegralTexture,
+                              GAUSSIAN_INTEGRAL_TEXTURE_IDX);
 -    glUniformBlockBinding(
 -        m_tessellateProgram,
 -        glGetUniformBlockIndex(m_tessellateProgram, GLSL_FlushUniforms),
 -        FLUSH_UNIFORM_BUFFER_IDX);
 +    {
-+        GLuint blockIndex = glGetUniformBlockIndex(m_tessellateProgram, GLSL_FlushUniforms);
++        GLuint blockIndex =
++            glGetUniformBlockIndex(m_tessellateProgram, GLSL_FlushUniforms);
 +        if (blockIndex != GL_INVALID_INDEX)
-+            glUniformBlockBinding(m_tessellateProgram, blockIndex, FLUSH_UNIFORM_BUFFER_IDX);
++            glUniformBlockBinding(m_tessellateProgram,
++                                  blockIndex,
++                                  FLUSH_UNIFORM_BUFFER_IDX);
 +    }
      if (!m_capabilities.ARB_shader_storage_buffer_object)
      {
          // Our GL driver doesn't support storage buffers. We polyfill these
-@@ -715,7 +717,9 @@ protected:
-         // WebGL doesn't support buffer mapping. Don't use it on ANGLE either
-         // since we don't trust ANGLE with features that haven't been validated
-         // by WebGL.
+@@ -912,42 +920,14 @@ protected:
+
+     void* onMapBuffer(int bufferIdx, size_t mapSizeInBytes) override
+     {
+-#ifndef RIVE_WEBGL
+-        // WebGL doesn't support buffer mapping. Don't use it on ANGLE either
+-        // since we don't trust ANGLE with features that haven't been validated
+-        // by WebGL.
 -        if (!m_state->capabilities().isANGLESystemDriver)
-+        // Also disable on Windows/Godot to avoid "Buffer must be bound and not mapped" errors
-+        // and ensure stability with the Compatibility backend.
-+        if (false && !m_state->capabilities().isANGLESystemDriver)
-         {
-             m_state->bindBuffer(m_target, m_bufferID);
-             return glMapBufferRange(m_target,
-@@ -738,7 +742,7 @@ protected:
-         // WebGL doesn't support buffer mapping. Don't use it on ANGLE either
-         // since we don't trust ANGLE with features that haven't been validated
-         // by WebGL.
+-        {
+-            m_state->bindBuffer(m_target, m_bufferID);
+-            return glMapBufferRange(m_target,
+-                                    0,
+-                                    mapSizeInBytes,
+-                                    GL_MAP_WRITE_BIT |
+-                                        GL_MAP_INVALIDATE_BUFFER_BIT);
+-        }
+-        else
+-#endif
+-        {
+-            return shadowBuffer();
+-        }
++        // Keep buffer uploads compatible with Godot's shared GL context.
++        return shadowBuffer();
+     }
+
+     void onUnmapAndSubmitBuffer(int bufferIdx, size_t mapSizeInBytes) override
+     {
+         m_state->bindBuffer(m_target, m_bufferID);
+-#ifndef RIVE_WEBGL
+-        // WebGL doesn't support buffer mapping. Don't use it on ANGLE either
+-        // since we don't trust ANGLE with features that haven't been validated
+-        // by WebGL.
 -        if (!m_state->capabilities().isANGLESystemDriver)
-+        if (false && !m_state->capabilities().isANGLESystemDriver)
-         {
-             glUnmapBuffer(m_target);
-         }
-@@ -996,9 +1000,11 @@ void RenderContextGLImpl::AtlasProgram::compile(
+-        {
+-            glUnmapBuffer(m_target);
+-        }
+-        else
+-#endif
+-        {
+-            glBufferSubData(m_target, 0, mapSizeInBytes, shadowBuffer());
+-        }
++        glBufferSubData(m_target, 0, mapSizeInBytes, shadowBuffer());
+     }
+
+     const GLenum m_target;
+@@ -1191,9 +1171,14 @@ void RenderContextGLImpl::FeatherAtlasProgram::compile(
                                       capabilities);
      m_program.link();
      state->bindProgram(m_program);
@@ -75,16 +115,19 @@ index aefc4dd4..70df9612 100644
 -                          glGetUniformBlockIndex(m_program, GLSL_FlushUniforms),
 -                          FLUSH_UNIFORM_BUFFER_IDX);
 +    {
-+        GLuint blockIndex = glGetUniformBlockIndex(m_program, GLSL_FlushUniforms);
++        GLuint blockIndex =
++            glGetUniformBlockIndex(m_program, GLSL_FlushUniforms);
 +        if (blockIndex != GL_INVALID_INDEX)
-+            glUniformBlockBinding(m_program, blockIndex, FLUSH_UNIFORM_BUFFER_IDX);
++            glUniformBlockBinding(m_program,
++                                  blockIndex,
++                                  FLUSH_UNIFORM_BUFFER_IDX);
 +    }
      glutils::Uniform1iByName(m_program,
                               GLSL_tessVertexTexture,
                               TESS_VERTEX_TEXTURE_IDX);
-@@ -1603,9 +1609,11 @@ bool RenderContextGLImpl::DrawProgram::advanceCreation(
+@@ -1838,9 +1823,11 @@ bool RenderContextGLImpl::DrawProgram::advanceCreation(
      }
- 
+
      m_state->bindProgram(m_id);
 -    glUniformBlockBinding(m_id,
 -                          glGetUniformBlockIndex(m_id, GLSL_FlushUniforms),
@@ -94,60 +137,44 @@ index aefc4dd4..70df9612 100644
 +        if (blockIndex != GL_INVALID_INDEX)
 +            glUniformBlockBinding(m_id, blockIndex, FLUSH_UNIFORM_BUFFER_IDX);
 +    }
- 
+
      const bool isImageDraw = gpu::DrawTypeIsImageDraw(drawType);
      const bool isTessellationDraw = is_tessellation_draw(drawType);
-@@ -1618,10 +1626,9 @@ bool RenderContextGLImpl::DrawProgram::advanceCreation(
-                                 gpu::ShaderMiscFlags::borrowedCoveragePass);
-     if (isImageDraw)
-     {
--        glUniformBlockBinding(
--            m_id,
--            glGetUniformBlockIndex(m_id, GLSL_ImageDrawUniforms),
--            IMAGE_DRAW_UNIFORM_BUFFER_IDX);
-+        GLuint blockIndex = glGetUniformBlockIndex(m_id, GLSL_ImageDrawUniforms);
-+        if (blockIndex != GL_INVALID_INDEX)
-+            glUniformBlockBinding(m_id, blockIndex, IMAGE_DRAW_UNIFORM_BUFFER_IDX);
-     }
-     if (isTessellationDraw)
-     {
-@@ -2798,6 +2805,16 @@ std::unique_ptr<RenderContext> RenderContextGLImpl::MakeContext(
-                &capabilities.contextVersionMinor);
-         capabilities.vendorDriverVersionMajor = 0;
-         capabilities.vendorDriverVersionMinor = 0;
-+
-+        // Force GLES mode for Desktop GL < 4.0 to support Godot's OpenGL 3 backend (GL 3.3)
-+        if (capabilities.contextVersionMajor < 4)
-+        {
-+            capabilities.isGLES = true;
-+            // Clamp to 3.0 to avoid enabling GLES 3.1+ features (SSBO, Images)
-+            // which are not guaranteed in Desktop GL 3.3.
-+            capabilities.contextVersionMajor = 3;
-+            capabilities.contextVersionMinor = 0;
-+        }
-     }
-     else if (capabilities.isPowerVR)
-     {
-@@ -2818,9 +2835,9 @@ std::unique_ptr<RenderContext> RenderContextGLImpl::MakeContext(
-         capabilities.vendorDriverVersionMinor = 0;
-     }
- #ifdef RIVE_DESKTOP_GL
--    assert(capabilities.contextVersionMajor == GLAD_GL_version_major);
--    assert(capabilities.contextVersionMinor == GLAD_GL_version_minor);
--    assert(capabilities.isGLES == static_cast<bool>(GLAD_GL_version_es));
-+    // assert(capabilities.contextVersionMajor == GLAD_GL_version_major);
-+    // assert(capabilities.contextVersionMinor == GLAD_GL_version_minor);
-+    // assert(capabilities.isGLES == static_cast<bool>(GLAD_GL_version_es));
+@@ -3331,6 +3318,17 @@ std::unique_ptr<RenderContext> RenderContextGLImpl::MakeContext(
+     assert(capabilities.isGLES == static_cast<bool>(GLAD_GL_version_es));
  #endif
- 
-     if (!capabilities.isAdreno ||
-@@ -2902,6 +2919,16 @@ std::unique_ptr<RenderContext> RenderContextGLImpl::MakeContext(
-         capabilities.EXT_clip_cull_distance = true;
-     }
- 
-+    // Force disable advanced features if we are forcing GLES 3.0 mode for compatibility
-+    if (capabilities.isGLES && capabilities.contextVersionMajor == 3 && capabilities.contextVersionMinor == 0)
+
++    // Godot's Compatibility renderer can provide a desktop GL 3.3/4.1
++    // context. Use Rive's GLES 3.0 baseline instead of requiring GL 4.2.
++    const bool useGodotCompatibilityProfile =
++        !capabilities.isGLES && !capabilities.isContextVersionAtLeast(4, 2);
++    if (useGodotCompatibilityProfile)
 +    {
++        capabilities.isGLES = true;
++        capabilities.contextVersionMajor = 3;
++        capabilities.contextVersionMinor = 0;
++    }
++
+     if (!capabilities.isAdreno ||
+         !sscanf(rendererString, "Adreno (TM) %d", &capabilities.adrenoSeries))
+     {
+@@ -3389,7 +3387,7 @@ std::unique_ptr<RenderContext> RenderContextGLImpl::MakeContext(
+     if (capabilities.isGLES)
+     {
+         // ETC2 is mandatory in GLES 3.0+.
+-        capabilities.supportsETC2 = true;
++        capabilities.supportsETC2 = !useGodotCompatibilityProfile;
+         if (capabilities.isContextVersionAtLeast(3, 1))
+         {
+             capabilities.ARB_shader_storage_buffer_object = true;
+@@ -3639,6 +3637,17 @@ std::unique_ptr<RenderContext> RenderContextGLImpl::MakeContext(
+     }
+ #endif // RIVE_WEBGL
+
++    if (useGodotCompatibilityProfile)
++    {
++        // Do not let extension discovery re-enable features outside the
++        // baseline shader profile used by Godot's Compatibility renderer.
 +        capabilities.ARB_shader_storage_buffer_object = false;
 +        capabilities.OES_shader_image_atomic = false;
 +        capabilities.ARB_shader_image_load_store = false;
@@ -155,48 +182,6 @@ index aefc4dd4..70df9612 100644
 +        capabilities.ANGLE_base_vertex_base_instance_shader_builtin = false;
 +    }
 +
- #ifndef RIVE_WEBGL
-     GLint extensionCount;
-     glGetIntegerv(GL_NUM_EXTENSIONS, &extensionCount);
-@@ -2912,7 +2939,8 @@ std::unique_ptr<RenderContext> RenderContextGLImpl::MakeContext(
-         if (strcmp(ext, "GL_ANGLE_base_vertex_base_instance_shader_builtin") ==
-             0)
-         {
--            capabilities.ANGLE_base_vertex_base_instance_shader_builtin = true;
-+            if (!(capabilities.isGLES && capabilities.contextVersionMajor == 3 && capabilities.contextVersionMinor == 0))
-+                capabilities.ANGLE_base_vertex_base_instance_shader_builtin = true;
-         }
-         else if (strcmp(ext, "GL_ANGLE_shader_pixel_local_storage") == 0)
-         {
-@@ -2945,15 +2973,18 @@ std::unique_ptr<RenderContext> RenderContextGLImpl::MakeContext(
-         }
-         else if (strcmp(ext, "GL_ARB_shader_image_load_store") == 0)
-         {
--            capabilities.ARB_shader_image_load_store = true;
-+            if (!(capabilities.isGLES && capabilities.contextVersionMajor == 3 && capabilities.contextVersionMinor == 0))
-+                capabilities.ARB_shader_image_load_store = true;
-         }
-         else if (strcmp(ext, "GL_ARB_shader_storage_buffer_object") == 0)
-         {
--            capabilities.ARB_shader_storage_buffer_object = true;
-+            if (!(capabilities.isGLES && capabilities.contextVersionMajor == 3 && capabilities.contextVersionMinor == 0))
-+                capabilities.ARB_shader_storage_buffer_object = true;
-         }
-         else if (strcmp(ext, "GL_OES_shader_image_atomic") == 0)
-         {
--            capabilities.OES_shader_image_atomic = true;
-+            if (!(capabilities.isGLES && capabilities.contextVersionMajor == 3 && capabilities.contextVersionMinor == 0))
-+                capabilities.OES_shader_image_atomic = true;
-         }
-         else if (strcmp(ext, "GL_KHR_blend_equation_advanced") == 0)
-         {
-@@ -2969,7 +3000,8 @@ std::unique_ptr<RenderContext> RenderContextGLImpl::MakeContext(
-         }
-         else if (strcmp(ext, "GL_EXT_base_instance") == 0)
-         {
--            capabilities.EXT_base_instance = true;
-+            if (!(capabilities.isGLES && capabilities.contextVersionMajor == 3 && capabilities.contextVersionMinor == 0))
-+                capabilities.EXT_base_instance = true;
-         }
-         else if (strcmp(ext, "GL_EXT_clip_cull_distance") == 0 ||
-                  strcmp(ext, "GL_ANGLE_clip_cull_distance") == 0)
+     if (capabilities.ARB_shader_storage_buffer_object)
+     {
+         const bool storageBuffersAreCore =

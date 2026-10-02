@@ -8,6 +8,7 @@
 #include <godot_cpp/classes/input_event_mouse.hpp>
 #include <godot_cpp/classes/input_event_mouse_motion.hpp>
 #include <godot_cpp/classes/input_event_mouse_button.hpp>
+#include <godot_cpp/core/binder_common.hpp>
 
 #include "renderer/rive_render_registry.h"
 #include "rive_player.h"
@@ -20,10 +21,38 @@ class RiveControl : public Control, public RiveDrawable
 {
     GDCLASS(RiveControl, Control);
 
+public:
+    enum Fit {
+        FIT_FILL,
+        FIT_CONTAIN,
+        FIT_COVER,
+        FIT_WIDTH,
+        FIT_HEIGHT,
+        FIT_NONE,
+        FIT_SCALE_DOWN,
+    };
+
+    enum Alignment {
+        ALIGNMENT_TOP_LEFT,
+        ALIGNMENT_TOP_CENTER,
+        ALIGNMENT_TOP_RIGHT,
+        ALIGNMENT_CENTER_LEFT,
+        ALIGNMENT_CENTER,
+        ALIGNMENT_CENTER_RIGHT,
+        ALIGNMENT_BOTTOM_LEFT,
+        ALIGNMENT_BOTTOM_CENTER,
+        ALIGNMENT_BOTTOM_RIGHT,
+    };
+
+private:
+
     Ref<RiveFile> rive_file;
     Ref<RivePlayer> rive_player;
     Ref<RiveTextureTarget> texture_target;
     Dictionary property_values;
+    String artboard_name;
+    Fit fit = FIT_CONTAIN;
+    Alignment alignment = ALIGNMENT_CENTER;
 
     struct RiveProperty
     {
@@ -50,6 +79,7 @@ protected:
     rive::Mat2D _get_rive_transform() const;
     void _apply_property_values();
     void _on_rive_file_changed();
+    Error _fail_load(Error p_error, const String &p_message);
 
 public:
     RiveControl();
@@ -58,10 +88,19 @@ public:
     void set_rive_file(const Ref<RiveFile> &p_file);
     Ref<RiveFile> get_rive_file() const;
 
+    void set_artboard_name(const String &p_name);
+    String get_artboard_name() const;
+    PackedStringArray get_artboard_list() const;
+
+    void set_fit(Fit p_fit);
+    Fit get_fit() const;
+    void set_alignment(Alignment p_alignment);
+    Alignment get_alignment() const;
+
     void set_property_values(const Dictionary &p_values);
     Dictionary get_property_values() const;
 
-    void load_file();
+    Error load_file();
 
     // RiveDrawable implementation
     void draw(rive::Renderer *renderer) override;
@@ -91,5 +130,8 @@ public:
     Ref<RiveViewModelInstance> get_view_model_instance() const;
     Ref<RivePlayer> get_rive_player() const { return rive_player; }
 };
+
+VARIANT_ENUM_CAST(RiveControl::Fit);
+VARIANT_ENUM_CAST(RiveControl::Alignment);
 
 #endif // RIVE_CONTROL_H

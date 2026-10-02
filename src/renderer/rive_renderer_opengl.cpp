@@ -8,6 +8,7 @@
 #include <godot_cpp/variant/utility_functions.hpp>
 
 #include "glad_custom.h"
+#include "rive/renderer/texture.hpp"
 #include "rive/renderer/gl/render_context_gl_impl.hpp"
 #include "rive/renderer/gl/render_target_gl.hpp"
 #include "rive/renderer/rive_renderer.hpp"
@@ -70,6 +71,13 @@ bool create_opengl_context() {
     return true;
 }
 
+void cleanup_opengl_context() {
+    RiveRenderRegistry::get_singleton()->clear_renderer_states();
+    RiveRenderRegistry::get_singleton()->set_factory(nullptr);
+    delete g_rive_context;
+    g_rive_context = nullptr;
+}
+
 void render_texture_opengl(RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height) {
     if (!g_rive_context || !drawable) return;
 
@@ -97,7 +105,7 @@ void render_texture_opengl(RID texture_rid, RiveDrawable *drawable, uint32_t wid
         rive::RiveRenderer renderer(g_rive_context);
         renderer.save();
         renderer.transform(rive::Mat2D(1.0f, 0.0f, 0.0f, -1.0f, 0.0f, (float)height));
-        drawable->draw(&renderer);
+        drawable->replay_draw_commands(&renderer);
         renderer.restore();
     }
     

@@ -9,6 +9,7 @@
 #include "rive/renderer/metal/render_context_metal_impl.h"
 #include "rive/renderer/render_context.hpp"
 #include "rive/renderer/rive_renderer.hpp"
+#include <atomic>
 
 using namespace godot;
 using namespace rive;
@@ -16,6 +17,11 @@ using namespace rive;
 namespace rive_integration {
 
 static rive::gpu::RenderContext *g_rive_context = nullptr;
+static id<MTLCommandQueue> g_command_queue = nil;
+static std::atomic<uint64_t> g_completed_frame{0};
+static uint64_t g_frame_idx = 0;
+
+void cleanup_metal_context();
 
 class MetalRendererState : public RendererState {
 public:
@@ -27,6 +33,7 @@ public:
 
 bool create_metal_context(RenderingDevice* rd) {
     if (!rd) return false;
+    if (g_rive_context) cleanup_metal_context();
     
     void* device_ptr = (void*)rd->get_driver_resource(RenderingDevice::DRIVER_RESOURCE_LOGICAL_DEVICE, RID(), 0);
     if (!device_ptr) return false;
@@ -37,12 +44,29 @@ bool create_metal_context(RenderingDevice* rd) {
     std::unique_ptr<rive::gpu::RenderContext> ctx = rive::gpu::RenderContextMetalImpl::MakeContext(device, options);
     if (!ctx) return false;
 
-    if (g_rive_context) delete g_rive_context;
     g_rive_context = ctx.release();
 
     RiveRenderRegistry::get_singleton()->set_factory(g_rive_context);
     UtilityFunctions::print_verbose("RIVE: create_metal_context succeeded");
     return true;
+}
+
+void cleanup_metal_context() {
+    @autoreleasepool {
+        if (g_command_queue) {
+            // Drain only during shutdown; normal frames stay asynchronous.
+            id<MTLCommandBuffer> drain = [g_command_queue commandBuffer];
+            [drain commit];
+            [drain waitUntilCompleted];
+        }
+    }
+    RiveRenderRegistry::get_singleton()->clear_renderer_states();
+    RiveRenderRegistry::get_singleton()->set_factory(nullptr);
+    delete g_rive_context;
+    g_rive_context = nullptr;
+    g_command_queue = nil;
+    g_completed_frame.store(0, std::memory_order_release);
+    g_frame_idx = 0;
 }
 
 void render_texture_metal(RenderingDevice *rd, RID texture_rid, RiveDrawable *drawable, uint32_t width, uint32_t height) {
@@ -53,6 +77,7 @@ void render_texture_metal(RenderingDevice *rd, RID texture_rid, RiveDrawable *dr
         if (!queue_ptr) return;
         
         id<MTLCommandQueue> queue = (__bridge id<MTLCommandQueue>)(queue_ptr);
+        g_command_queue = queue;
         id<MTLCommandBuffer> cmd_buffer = [queue commandBuffer];
         
         if (!cmd_buffer) return;
@@ -94,21 +119,29 @@ void render_texture_metal(RenderingDevice *rd, RID texture_rid, RiveDrawable *dr
             fr.renderTarget = rtarget.get();
             fr.externalCommandBuffer = (__bridge void*)cmd_buffer;
             
-            static uint64_t frame_idx = 0;
-            frame_idx++;
-            fr.currentFrameNumber = frame_idx;
-            fr.safeFrameNumber = (frame_idx > 2) ? frame_idx - 2 : 0;
+            const uint64_t submitted_frame = ++g_frame_idx;
+            fr.currentFrameNumber = submitted_frame;
+            fr.safeFrameNumber = g_completed_frame.load(std::memory_order_acquire);
             
             {
                 rive::RiveRenderer renderer(g_rive_context);
-                drawable->draw(&renderer);
+                drawable->replay_draw_commands(&renderer);
             }
             
             g_rive_context->flush(fr);
+
+            [cmd_buffer addCompletedHandler:^(id<MTLCommandBuffer> buffer) {
+                if (buffer.status != MTLCommandBufferStatusCompleted) return;
+                uint64_t completed = g_completed_frame.load(std::memory_order_relaxed);
+                while (completed < submitted_frame &&
+                       !g_completed_frame.compare_exchange_weak(completed, submitted_frame,
+                                                                std::memory_order_release,
+                                                                std::memory_order_relaxed)) {
+                }
+            }];
         }
         
         [cmd_buffer commit];
-        [cmd_buffer waitUntilCompleted];
     }
 }
 
