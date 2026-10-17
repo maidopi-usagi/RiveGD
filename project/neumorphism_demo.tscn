@@ -1,0 +1,16 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://neumorphism_demo.gd" id="1_demo"]
+[ext_resource type="FontFile" path="res://assets/fonts/InterVariable.ttf" id="2_font"]
+
+[node name="NeumorphismDemo" type="Node"]
+script = ExtResource("1_demo")
+font_resource = ExtResource("2_font")
+
+[node name="Canvas" type="RiveCanvas2D" parent="."]
+size = Vector2i(1280, 840)
+
+[node name="Raw" type="RiveRaw" parent="Canvas"]
+bounds = Rect2(0, 0, 1280, 840)
+
+[connection signal="draw_rive" from="Canvas/Raw" to="." method="_on_draw_rive"]

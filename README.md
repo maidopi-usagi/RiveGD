@@ -51,6 +51,9 @@ Inspector edits are saved with the scene. Use `RiveViewModelPreset` for reusable
 
 - [Vector drawing](project/raw_drawing_demo.gd)
 - [SVG rendering](project/svg_demo.gd)
+- [Neumorphism UI](project/neumorphism_demo.tscn): animated Godot-themed vector controls and robot head.
+
+The demo's modified robot head is based on the [Godot logo](https://github.com/godotengine/godot/blob/master/misc/logo/LICENSE.txt) by Andrea Calabró ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)). [Bundled font license](project/assets/fonts/README.md).
 
 ## Limitations
 
