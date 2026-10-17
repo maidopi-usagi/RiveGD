@@ -29,7 +29,7 @@ public:
                                    uint32_t p_vertex_count,
                                    uint32_t p_index_count,
                                    int p_blend_mode,
-                                   float p_opacity) = 0;
+                                   float p_opacity, int p_sampler_key = 0) = 0;
 };
 
 class RiveDrawable {
@@ -48,7 +48,6 @@ public:
     RendererState* renderer_state = nullptr;
 
 private:
-    // shared_ptr supports an incomplete PIMPL type in all translation units.
     std::shared_ptr<RiveCommandRecording> recorded_commands;
 };
 
@@ -70,4 +69,4 @@ public:
     void clear_renderer_states();
 };
 
-#endif // RIVE_RENDER_REGISTRY_H
+#endif

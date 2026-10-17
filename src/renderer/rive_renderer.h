@@ -9,9 +9,6 @@
 using namespace godot;
 
 namespace rive_integration {
-    // Runs backend-factory/resource work synchronously on Godot's render
-    // thread. Calls are serialized with render_texture(). It is safe to call
-    // this from a RiveRaw draw callback while command recording is active.
     bool run_on_rive_render_thread(const std::function<void()> &p_task);
 
     void initialize_rive_renderer();
@@ -25,4 +22,4 @@ namespace rive_integration {
 #endif
 }
 
-#endif // RIVE_RENDERER_H
+#endif

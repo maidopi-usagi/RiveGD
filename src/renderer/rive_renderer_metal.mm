@@ -54,7 +54,6 @@ bool create_metal_context(RenderingDevice* rd) {
 void cleanup_metal_context() {
     @autoreleasepool {
         if (g_command_queue) {
-            // Drain only during shutdown; normal frames stay asynchronous.
             id<MTLCommandBuffer> drain = [g_command_queue commandBuffer];
             [drain commit];
             [drain waitUntilCompleted];

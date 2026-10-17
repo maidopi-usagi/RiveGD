@@ -13,10 +13,21 @@
 #include <cmath>
 #include <vector>
 #include <string>
+#include <limits>
 
 using namespace godot;
 
-// --- RivePath ---
+static_assert(RivePath::FILL_NON_ZERO == static_cast<int>(rive::FillRule::nonZero));
+static_assert(RivePath::FILL_EVEN_ODD == static_cast<int>(rive::FillRule::evenOdd));
+static_assert(RivePath::FILL_CLOCKWISE == static_cast<int>(rive::FillRule::clockwise));
+static_assert(RivePaint::STYLE_STROKE == static_cast<int>(rive::RenderPaintStyle::stroke));
+static_assert(RivePaint::STYLE_FILL == static_cast<int>(rive::RenderPaintStyle::fill));
+static_assert(RivePaint::JOIN_MITER == static_cast<int>(rive::StrokeJoin::miter));
+static_assert(RivePaint::JOIN_ROUND == static_cast<int>(rive::StrokeJoin::round));
+static_assert(RivePaint::JOIN_BEVEL == static_cast<int>(rive::StrokeJoin::bevel));
+static_assert(RivePaint::CAP_BUTT == static_cast<int>(rive::StrokeCap::butt));
+static_assert(RivePaint::CAP_ROUND == static_cast<int>(rive::StrokeCap::round));
+static_assert(RivePaint::CAP_SQUARE == static_cast<int>(rive::StrokeCap::square));
 
 RivePath::RivePath() {
     raw_path = std::make_unique<rive::RawPath>();
@@ -32,8 +43,10 @@ void RivePath::_bind_methods() {
     ClassDB::bind_method(D_METHOD("close"), &RivePath::close);
     ClassDB::bind_method(D_METHOD("reset"), &RivePath::reset);
     ClassDB::bind_method(D_METHOD("add_rect", "x", "y", "w", "h"), &RivePath::add_rect);
+    ClassDB::bind_method(D_METHOD("add_round_rect", "x", "y", "w", "h", "radius"), &RivePath::add_round_rect);
     ClassDB::bind_method(D_METHOD("add_oval", "x", "y", "w", "h"), &RivePath::add_oval);
     ClassDB::bind_method(D_METHOD("add_circle", "cx", "cy", "radius"), &RivePath::add_circle);
+    ClassDB::bind_method(D_METHOD("add_arc", "cx", "cy", "radius", "start_angle", "sweep_angle"), &RivePath::add_arc);
     ClassDB::bind_method(D_METHOD("add_path", "other"), &RivePath::add_path);
     ClassDB::bind_method(D_METHOD("add_path_transformed", "other", "xform"), &RivePath::add_path_transformed);
     ClassDB::bind_method(D_METHOD("add_poly", "points", "closed"), &RivePath::add_poly);
@@ -42,6 +55,9 @@ void RivePath::_bind_methods() {
     ClassDB::bind_method(D_METHOD("morph", "proc"), &RivePath::morph);
     ClassDB::bind_method(D_METHOD("set_fill_rule", "rule"), &RivePath::set_fill_rule);
     ClassDB::bind_method(D_METHOD("parse_svg", "path_data"), &RivePath::parse_svg);
+    BIND_ENUM_CONSTANT(FILL_NON_ZERO);
+    BIND_ENUM_CONSTANT(FILL_EVEN_ODD);
+    BIND_ENUM_CONSTANT(FILL_CLOCKWISE);
 }
 
 void RivePath::move_to(float x, float y) {
@@ -77,6 +93,91 @@ void RivePath::reset() {
 void RivePath::add_rect(float x, float y, float w, float h) {
     raw_path->addRect(rive::AABB(x, y, x + w, y + h));
     is_dirty = true;
+}
+
+static bool finite_path_coordinate(double value) {
+    const double limit = std::numeric_limits<float>::max();
+    return std::isfinite(value) && value >= -limit && value <= limit;
+}
+
+bool RivePath::add_round_rect(float x, float y, float w, float h, float radius) {
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(w) ||
+        !std::isfinite(h) || !std::isfinite(radius) || w <= 0.0f ||
+        h <= 0.0f || radius < 0.0f) {
+        return false;
+    }
+    const double left = x;
+    const double top = y;
+    const double right = left + static_cast<double>(w);
+    const double bottom = top + static_cast<double>(h);
+    if (!finite_path_coordinate(right) || !finite_path_coordinate(bottom)) return false;
+    const double r = std::min(static_cast<double>(radius),
+                             0.5 * std::min(static_cast<double>(w), static_cast<double>(h)));
+    if (r == 0.0) {
+        raw_path->addRect(rive::AABB(x, y, static_cast<float>(right), static_cast<float>(bottom)));
+    } else {
+        constexpr double kappa = 0.5522847498307936;
+        const double k = r * kappa;
+        auto move = [&](double px, double py) { raw_path->moveTo(static_cast<float>(px), static_cast<float>(py)); };
+        auto line = [&](double px, double py) { raw_path->lineTo(static_cast<float>(px), static_cast<float>(py)); };
+        auto cubic = [&](double ax, double ay, double bx, double by, double px, double py) {
+            raw_path->cubicTo(static_cast<float>(ax), static_cast<float>(ay),
+                              static_cast<float>(bx), static_cast<float>(by),
+                              static_cast<float>(px), static_cast<float>(py));
+        };
+        move(left + r, top);
+        line(right - r, top);
+        cubic(right - r + k, top, right, top + r - k, right, top + r);
+        line(right, bottom - r);
+        cubic(right, bottom - r + k, right - r + k, bottom, right - r, bottom);
+        line(left + r, bottom);
+        cubic(left + r - k, bottom, left, bottom - r + k, left, bottom - r);
+        line(left, top + r);
+        cubic(left, top + r - k, left + r - k, top, left + r, top);
+        raw_path->close();
+    }
+    is_dirty = true;
+    return true;
+}
+
+bool RivePath::add_arc(float cx, float cy, float radius, float start_angle, float sweep_angle) {
+    if (!std::isfinite(cx) || !std::isfinite(cy) || !std::isfinite(radius) ||
+        !std::isfinite(start_angle) || !std::isfinite(sweep_angle) || radius < 0.0f) {
+        return false;
+    }
+    if (radius == 0.0f || sweep_angle == 0.0f) return true;
+    constexpr double pi = 3.14159265358979323846;
+    constexpr double tau = 2.0 * pi;
+    const double sweep = std::max(-tau, std::min(tau, static_cast<double>(sweep_angle)));
+    const double start = std::remainder(static_cast<double>(start_angle), tau);
+    const int count = static_cast<int>(std::ceil(std::abs(sweep) / (pi * 0.5)));
+    const double step = sweep / count;
+    const double tangent = (4.0 / 3.0) * std::tan(step * 0.25) * radius;
+    std::vector<rive::Vec2D> points;
+    points.reserve(1 + count * 3);
+    auto point = [&](double x, double y) {
+        if (!finite_path_coordinate(x) || !finite_path_coordinate(y)) return false;
+        points.push_back({static_cast<float>(x), static_cast<float>(y)});
+        return true;
+    };
+    if (!point(cx + radius * std::cos(start), cy + radius * std::sin(start))) return false;
+    for (int i = 0; i < count; ++i) {
+        const double a = start + step * i;
+        const double b = start + step * (i + 1);
+        const double ca = std::cos(a), sa = std::sin(a);
+        const double cb = std::cos(b), sb = std::sin(b);
+        if (!point(cx + radius * ca - tangent * sa, cy + radius * sa + tangent * ca) ||
+            !point(cx + radius * cb + tangent * sb, cy + radius * sb - tangent * cb) ||
+            !point(cx + radius * cb, cy + radius * sb)) {
+            return false;
+        }
+    }
+    raw_path->move(points[0]);
+    for (size_t i = 1; i < points.size(); i += 3) {
+        raw_path->cubic(points[i], points[i + 1], points[i + 2]);
+    }
+    is_dirty = true;
+    return true;
 }
 
 void RivePath::add_oval(float x, float y, float w, float h) {
@@ -243,7 +344,6 @@ static bool is_number_start(char32_t c) {
 }
 
 static float read_float(const String& d, int& i) {
-    // Skip whitespace/commas
     while (i < d.length() && (d[i] == ' ' || d[i] == ',' || d[i] == '\t' || d[i] == '\n')) i++;
     
     int start = i;
@@ -264,9 +364,7 @@ static float read_float(const String& d, int& i) {
 }
 
 static void svg_arc_to(RivePath* path, float rx, float ry, float angle, bool large_arc_flag, bool sweep_flag, float x, float y, float cur_x, float cur_y) {
-    // Endpoint-to-center conversion per SVG 1.1 Appendix F.6.5,
-    // then split the resulting elliptical arc into <= 90deg segments,
-    // each approximated by a cubic Bezier.
+    // SVG 1.1 F.6.5: endpoint-to-center conversion, then cubic segments of at most 90 degrees.
     if (cur_x == x && cur_y == y) return;
     if (rx == 0 || ry == 0) {
         path->line_to(x, y);
@@ -283,7 +381,6 @@ static void svg_arc_to(RivePath* path, float rx, float ry, float angle, bool lar
     float dx = (cur_x - x) * 0.5f;
     float dy = (cur_y - y) * 0.5f;
 
-    // (x1', y1') — coordinates in the rotated frame.
     float x1p = cos_phi * dx + sin_phi * dy;
     float y1p = -sin_phi * dx + cos_phi * dy;
 
@@ -292,7 +389,6 @@ static void svg_arc_to(RivePath* path, float rx, float ry, float angle, bool lar
     float x1p_sq = x1p * x1p;
     float y1p_sq = y1p * y1p;
 
-    // Scale up radii if they are too small to fit the chord.
     float lambda = x1p_sq / rx_sq + y1p_sq / ry_sq;
     if (lambda > 1.0f) {
         float s = std::sqrt(lambda);
@@ -310,11 +406,9 @@ static void svg_arc_to(RivePath* path, float rx, float ry, float angle, bool lar
     float cxp = coef * (rx * y1p) / ry;
     float cyp = coef * -(ry * x1p) / rx;
 
-    // Center in user space.
     float cx = cos_phi * cxp - sin_phi * cyp + (cur_x + x) * 0.5f;
     float cy = sin_phi * cxp + cos_phi * cyp + (cur_y + y) * 0.5f;
 
-    // Start angle and sweep.
     auto angle_between = [](float ux, float uy, float vx, float vy) {
         float dot = ux * vx + uy * vy;
         float len = std::sqrt((ux * ux + uy * uy) * (vx * vx + vy * vy));
@@ -337,12 +431,10 @@ static void svg_arc_to(RivePath* path, float rx, float ry, float angle, bool lar
     if (!sweep_flag && delta > 0.0f) delta -= (float)Math_TAU;
     else if (sweep_flag && delta < 0.0f) delta += (float)Math_TAU;
 
-    // Number of cubic segments (each spans <= 90deg).
     int segments = (int)std::ceil(std::abs(delta) / ((float)Math_PI * 0.5f));
     if (segments < 1) segments = 1;
     float seg_delta = delta / (float)segments;
-    // Bezier control point handle length for a unit-circle arc segment.
-    float t = (4.0f / 3.0f) * std::tan(seg_delta * 0.25f);
+    float tangent_length = (4.0f / 3.0f) * std::tan(seg_delta * 0.25f);
 
     float a = theta1;
     float prev_cos = std::cos(a);
@@ -352,14 +444,12 @@ static void svg_arc_to(RivePath* path, float rx, float ry, float angle, bool lar
         float c1 = std::cos(a1);
         float s1 = std::sin(a1);
 
-        // Points on the unit circle (x', y') frame.
-        float p1x = prev_cos - t * prev_sin;
-        float p1y = prev_sin + t * prev_cos;
-        float p2x = c1 + t * s1;
-        float p2y = s1 - t * c1;
+        float p1x = prev_cos - tangent_length * prev_sin;
+        float p1y = prev_sin + tangent_length * prev_cos;
+        float p2x = c1 + tangent_length * s1;
+        float p2y = s1 - tangent_length * c1;
 
-        // Scale by (rx, ry), rotate by phi, translate by center.
-        auto map = [&](float px, float py, float& ox, float& oy) {
+        auto map_ellipse_point = [&](float px, float py, float& ox, float& oy) {
             float xs = px * rx;
             float ys = py * ry;
             ox = cos_phi * xs - sin_phi * ys + cx;
@@ -367,11 +457,10 @@ static void svg_arc_to(RivePath* path, float rx, float ry, float angle, bool lar
         };
 
         float c1x, c1y, c2x, c2y, ex, ey;
-        map(p1x, p1y, c1x, c1y);
-        map(p2x, p2y, c2x, c2y);
-        map(c1, s1, ex, ey);
+        map_ellipse_point(p1x, p1y, c1x, c1y);
+        map_ellipse_point(p2x, p2y, c2x, c2y);
+        map_ellipse_point(c1, s1, ex, ey);
 
-        // Last segment snaps exactly to (x, y) to avoid rounding drift.
         if (s == segments - 1) {
             ex = x;
             ey = y;
@@ -397,7 +486,6 @@ void RivePath::parse_svg(String path_data) {
     while (i < len) {
         char32_t c = path_data[i];
         
-        // Skip whitespace
         if (c == ' ' || c == ',' || c == '\t' || c == '\n') {
             i++;
             continue;
@@ -407,7 +495,6 @@ void RivePath::parse_svg(String path_data) {
             last_cmd = c;
             i++;
         } else {
-            // Implicit command (same as last)
             if (last_cmd == 'm') last_cmd = 'l';
             if (last_cmd == 'M') last_cmd = 'L';
         }
@@ -602,13 +689,10 @@ void RivePath::parse_svg(String path_data) {
                 break;
             }
             default:
-                // Unknown command, skip
                 i++;
                 break;
         }
 
-        // For T/t smooth-quad reflection: if the last executed command was not
-        // a quadratic, the implied previous control point is the current point.
         if (last_cmd != 'Q' && last_cmd != 'q' && last_cmd != 'T' && last_cmd != 't') {
             last_quad_x = cur_x;
             last_quad_y = cur_y;
@@ -619,19 +703,36 @@ void RivePath::parse_svg(String path_data) {
 rive::RenderPath* RivePath::get_render_path(rive::Factory* factory) {
     if (is_dirty || !render_path) {
         if (factory) {
-            // makeRenderPath swaps the contents of the supplied RawPath into the
-            // resulting RenderPath, leaving our raw_path empty. Pass a copy so
-            // we can keep mutating / inspecting raw_path (e.g. via get_bounds,
-            // is_empty, add_path, parse_svg) after this call.
-            rive::RawPath copy = *raw_path;
-            render_path = factory->makeRenderPath(copy, (rive::FillRule)fill_rule);
+            bool has_quadratic = false;
+            for (rive::PathVerb verb : raw_path->verbs()) {
+                if (verb == rive::PathVerb::quad) {
+                    has_quadratic = true;
+                    break;
+                }
+            }
+            rive::RawPath cubic_render_snapshot;
+            if (!has_quadratic) {
+                cubic_render_snapshot = *raw_path;
+            } else {
+                for (auto iter = raw_path->begin(); iter != raw_path->end(); ++iter) {
+                    const rive::Vec2D* p = iter.pts();
+                    switch (iter.verb()) {
+                        case rive::PathVerb::move: cubic_render_snapshot.move(p[0]); break;
+                        case rive::PathVerb::line: cubic_render_snapshot.line(p[1]); break;
+                        case rive::PathVerb::quad:
+                            cubic_render_snapshot.quadToCubic(p[1].x, p[1].y, p[2].x, p[2].y);
+                            break;
+                        case rive::PathVerb::cubic: cubic_render_snapshot.cubic(p[1], p[2], p[3]); break;
+                        case rive::PathVerb::close: cubic_render_snapshot.close(); break;
+                    }
+                }
+            }
+            render_path = factory->makeRenderPath(cubic_render_snapshot, (rive::FillRule)fill_rule);
             is_dirty = false;
         }
     }
     return render_path.get();
 }
-
-// --- RivePaint ---
 
 RivePaint::RivePaint() {}
 
@@ -645,11 +746,24 @@ void RivePaint::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_cap", "cap"), &RivePaint::set_cap);
     ClassDB::bind_method(D_METHOD("set_blend_mode", "blend_mode"), &RivePaint::set_blend_mode);
     ClassDB::bind_method(D_METHOD("set_feather", "feather"), &RivePaint::set_feather);
+    ClassDB::bind_method(D_METHOD("set_stroke_position", "position"), &RivePaint::set_stroke_position);
+    ClassDB::bind_method(D_METHOD("set_additiveness", "amount"), &RivePaint::set_additiveness);
     ClassDB::bind_method(D_METHOD("set_gradient", "gradient"), &RivePaint::set_gradient);
     ClassDB::bind_method(D_METHOD("get_gradient"), &RivePaint::get_gradient);
+    BIND_ENUM_CONSTANT(STYLE_STROKE);
+    BIND_ENUM_CONSTANT(STYLE_FILL);
+    BIND_ENUM_CONSTANT(JOIN_MITER);
+    BIND_ENUM_CONSTANT(JOIN_ROUND);
+    BIND_ENUM_CONSTANT(JOIN_BEVEL);
+    BIND_ENUM_CONSTANT(CAP_BUTT);
+    BIND_ENUM_CONSTANT(CAP_ROUND);
+    BIND_ENUM_CONSTANT(CAP_SQUARE);
+    BIND_ENUM_CONSTANT(STROKE_INSIDE);
+    BIND_ENUM_CONSTANT(STROKE_CENTER);
+    BIND_ENUM_CONSTANT(STROKE_OUTSIDE);
 }
 
-void RivePaint::_apply_properties() {
+void RivePaint::_initialize_paint_snapshot() {
     if (!render_paint) return;
     
     unsigned int r = (unsigned int)(color.r * 255);
@@ -662,113 +776,98 @@ void RivePaint::_apply_properties() {
     render_paint->style((rive::RenderPaintStyle)style);
     render_paint->join((rive::StrokeJoin)join);
     render_paint->cap((rive::StrokeCap)cap);
+    render_paint->strokePosition(static_cast<rive::StrokePosition>(stroke_position));
+    render_paint->additiveness(additiveness);
     render_paint->blendMode((rive::BlendMode)blend_mode);
     render_paint->feather(feather);
-    if (gradient.is_valid()) {
-        rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
-        render_paint->shader(gradient->get_shader_rcp(factory));
+    if (applied_shader) {
+        render_paint->shader(applied_shader);
     }
-    // NOTE: Do NOT call render_paint->shader(null) when no gradient is set.
-    // In Rive's PLS renderer, an explicitly-null shader rcp puts the paint
-    // into "shader mode with no shader", causing solid-color fills to render
-    // as black silhouettes. Leaving the shader unset preserves color().
+    // shader(nullptr) switches PLS paints to shader mode and renders solids black.
 }
 
 void RivePaint::set_color(Color p_color) {
+    if (color == p_color) return;
     color = p_color;
-    if (!render_paint) {
-        rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
-        if (factory) render_paint = factory->makeRenderPaint();
-    }
-    if (render_paint) {
-        unsigned int r = (unsigned int)(color.r * 255);
-        unsigned int g = (unsigned int)(color.g * 255);
-        unsigned int b = (unsigned int)(color.b * 255);
-        unsigned int a = (unsigned int)(color.a * 255);
-        render_paint->color((a << 24) | (r << 16) | (g << 8) | b);
-    }
+    dirty = true;
 }
 
 void RivePaint::set_thickness(float p_thickness) {
+    if (thickness == p_thickness) return;
     thickness = p_thickness;
-    if (!render_paint) {
-        rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
-        if (factory) render_paint = factory->makeRenderPaint();
-    }
-    if (render_paint) render_paint->thickness(thickness);
+    dirty = true;
 }
 
 void RivePaint::set_style(int p_style) {
+    if (style == p_style) return;
     style = p_style;
-    if (!render_paint) {
-        rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
-        if (factory) render_paint = factory->makeRenderPaint();
-    }
-    if (render_paint) render_paint->style((rive::RenderPaintStyle)style);
+    dirty = true;
 }
 
 void RivePaint::set_join(int p_join) {
+    if (join == p_join) return;
     join = p_join;
-    if (!render_paint) {
-        rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
-        if (factory) render_paint = factory->makeRenderPaint();
-    }
-    if (render_paint) render_paint->join((rive::StrokeJoin)join);
+    dirty = true;
 }
 
 void RivePaint::set_cap(int p_cap) {
+    if (cap == p_cap) return;
     cap = p_cap;
-    if (!render_paint) {
-        rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
-        if (factory) render_paint = factory->makeRenderPaint();
-    }
-    if (render_paint) render_paint->cap((rive::StrokeCap)cap);
+    dirty = true;
 }
 
 void RivePaint::set_blend_mode(int p_blend_mode) {
+    if (blend_mode == p_blend_mode) return;
     blend_mode = p_blend_mode;
-    if (!render_paint) {
-        rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
-        if (factory) render_paint = factory->makeRenderPaint();
-    }
-    if (render_paint) render_paint->blendMode((rive::BlendMode)blend_mode);
+    dirty = true;
 }
 
 void RivePaint::set_feather(float p_feather) {
+    if (feather == p_feather) return;
     feather = p_feather;
-    if (!render_paint) {
-        rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
-        if (factory) render_paint = factory->makeRenderPaint();
-    }
-    if (render_paint) render_paint->feather(feather);
+    dirty = true;
+}
+
+void RivePaint::set_stroke_position(int p_position) {
+    if (p_position < 0 || p_position > 2 || stroke_position == p_position) return;
+    stroke_position = p_position;
+    dirty = true;
+}
+
+void RivePaint::set_additiveness(float p_amount) {
+    if (!std::isfinite(p_amount) || p_amount < 0 || p_amount > 1) return;
+    additiveness = p_amount;
+    dirty = true;
 }
 
 void RivePaint::set_gradient(Ref<RiveGradient> p_gradient) {
+    if (gradient == p_gradient) return;
     gradient = p_gradient;
-    if (!render_paint) {
-        rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
-        if (factory) render_paint = factory->makeRenderPaint();
-    }
-    if (render_paint) {
-        rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
-        if (gradient.is_valid() && factory) {
-            render_paint->shader(gradient->get_shader_rcp(factory));
-        }
-        // See _apply_properties: never call shader(null), it forces black.
-    }
+    dirty = true;
 }
 
 rive::RenderPaint* RivePaint::get_render_paint(rive::Factory* factory) {
-    if (!render_paint && factory) {
-        render_paint = factory->makeRenderPaint();
-        _apply_properties();
+    if (!factory) return nullptr;
+    rive::rcp<rive::RenderShader> next_shader;
+    if (gradient.is_valid()) next_shader = gradient->get_shader_rcp(factory);
+    if (next_shader.get() != applied_shader.get()) dirty = true;
+    if (dirty || !render_paint) {
+        rive::rcp<rive::RenderPaint> next_paint = factory->makeRenderPaint();
+        if (!next_paint) return nullptr;
+        render_paint = std::move(next_paint);
+        applied_shader = std::move(next_shader);
+        _initialize_paint_snapshot();
+        dirty = false;
     }
     return render_paint.get();
 }
 
-// --- RiveRendererWrapper ---
-
 void RiveRendererWrapper::_bind_methods() {
+    BIND_ENUM_CONSTANT(FILTER_LINEAR); BIND_ENUM_CONSTANT(FILTER_NEAREST);
+    BIND_ENUM_CONSTANT(WRAP_CLAMP); BIND_ENUM_CONSTANT(WRAP_REPEAT); BIND_ENUM_CONSTANT(WRAP_MIRROR);
+    ClassDB::bind_method(D_METHOD("modulate_opacity", "opacity"), &RiveRendererWrapper::modulate_opacity);
+    ClassDB::bind_method(D_METHOD("modulate_color", "color", "replace"), &RiveRendererWrapper::modulate_color, DEFVAL(false));
+    ClassDB::bind_method(D_METHOD("clip_stroke", "path", "thickness", "join", "cap", "position"), &RiveRendererWrapper::clip_stroke, DEFVAL(0), DEFVAL(0), DEFVAL(1));
     ClassDB::bind_method(D_METHOD("save"), &RiveRendererWrapper::save);
     ClassDB::bind_method(D_METHOD("restore"), &RiveRendererWrapper::restore);
     ClassDB::bind_method(D_METHOD("transform", "xx", "xy", "yx", "yy", "tx", "ty"), &RiveRendererWrapper::transform);
@@ -777,8 +876,10 @@ void RiveRendererWrapper::_bind_methods() {
     ClassDB::bind_method(D_METHOD("rotate", "angle"), &RiveRendererWrapper::rotate);
     ClassDB::bind_method(D_METHOD("draw_path", "path", "paint"), &RiveRendererWrapper::draw_path);
     ClassDB::bind_method(D_METHOD("clip_path", "path"), &RiveRendererWrapper::clip_path);
-    ClassDB::bind_method(D_METHOD("draw_image", "image", "opacity", "blend_mode"), &RiveRendererWrapper::draw_image);
-    ClassDB::bind_method(D_METHOD("draw_image_mesh", "image", "vertices", "uvs", "indices", "opacity", "blend_mode"), &RiveRendererWrapper::draw_image_mesh);
+    ClassDB::bind_static_method("RiveRendererWrapper", D_METHOD("make_image_sampler", "filter", "wrap_x", "wrap_y"), &RiveRendererWrapper::make_image_sampler, DEFVAL(0), DEFVAL(0));
+    ClassDB::bind_method(D_METHOD("draw_image", "image", "opacity", "blend_mode", "sampler_key"), &RiveRendererWrapper::draw_image, DEFVAL(0));
+    ClassDB::bind_method(D_METHOD("draw_image_mesh", "image", "vertices", "uvs", "indices", "opacity", "blend_mode", "sampler_key"), &RiveRendererWrapper::draw_image_mesh, DEFVAL(0));
+    ClassDB::bind_method(D_METHOD("draw_image_mesh_instanced", "image", "mesh", "transforms", "opacities", "sampler_key"), &RiveRendererWrapper::draw_image_mesh_instanced, DEFVAL(PackedFloat32Array()), DEFVAL(0));
 }
 
 void RiveRendererWrapper::save() {
@@ -823,10 +924,11 @@ void RiveRendererWrapper::clip_path(Ref<RivePath> path) {
     }
 }
 
-void RiveRendererWrapper::draw_image(Ref<RiveImage> image, float opacity, int blend_mode) {
+void RiveRendererWrapper::draw_image(Ref<RiveImage> image, float opacity, int blend_mode, int sampler_key) {
+    if (!std::isfinite(opacity) || opacity < 0 || opacity > 1 || blend_mode < 0 || blend_mode > 28 || sampler_key < 0 || sampler_key > 17) return;
     if (renderer && image.is_valid() && image->is_loaded()) {
         renderer->drawImage(image->get_render_image(),
-                            rive::ImageSampler::LinearClamp(),
+                            rive::ImageSampler::SamplerFromKey(sampler_key),
                             (rive::BlendMode)blend_mode,
                             opacity);
     }
@@ -837,11 +939,12 @@ void RiveRendererWrapper::draw_image_mesh(Ref<RiveImage> image,
                                           PackedVector2Array uvs,
                                           PackedInt32Array indices,
                                           float opacity,
-                                          int blend_mode) {
+                                          int blend_mode, int sampler_key) {
     if (!renderer || image.is_null() || !image->is_loaded()) return;
+    if (!std::isfinite(opacity) || opacity < 0 || opacity > 1 || blend_mode < 0 || blend_mode > 28 || sampler_key < 0 || sampler_key > 17) return;
     int vcount = vertices.size();
     int icount = indices.size();
-    if (vcount == 0 || icount == 0 || uvs.size() != vcount) {
+    if (vcount == 0 || icount == 0 || icount % 3 != 0 || uvs.size() != vcount) {
         UtilityFunctions::push_warning("RiveRendererWrapper.draw_image_mesh: invalid vertex/uv/index counts.");
         return;
     }
@@ -856,7 +959,6 @@ void RiveRendererWrapper::draw_image_mesh(Ref<RiveImage> image,
             return;
         }
     }
-    // Each Vector2 is two floats; sizeof(Vector2) == 8 bytes assumed.
     size_t vert_bytes = (size_t)vcount * sizeof(float) * 2;
     size_t idx_bytes = (size_t)icount * sizeof(uint16_t);
 
@@ -864,6 +966,7 @@ void RiveRendererWrapper::draw_image_mesh(Ref<RiveImage> image,
     std::vector<float> uv_data((size_t)vcount * 2);
     std::vector<uint16_t> index_data((size_t)icount);
     for (int k = 0; k < vcount; k++) {
+        if (!vertices[k].is_finite() || !uvs[k].is_finite()) return;
         vertex_data[(size_t)k * 2] = vertices[k].x;
         vertex_data[(size_t)k * 2 + 1] = vertices[k].y;
         uv_data[(size_t)k * 2] = uvs[k].x;
@@ -873,13 +976,11 @@ void RiveRendererWrapper::draw_image_mesh(Ref<RiveImage> image,
         index_data[(size_t)k] = (uint16_t)indices[k];
     }
 
-    // The draw callback is normally recorded on the scene thread. Defer GPU
-    // buffer creation/mapping to replay on Godot's render thread.
     if (auto *recording = dynamic_cast<RiveCommandRecordingTarget *>(renderer)) {
         recording->record_image_mesh(image->get_render_image(),
                                      vertex_data.data(), uv_data.data(), index_data.data(),
                                      (uint32_t)vcount, (uint32_t)icount,
-                                     blend_mode, opacity);
+                                     blend_mode, opacity, sampler_key);
         return;
     }
 
@@ -925,15 +1026,13 @@ void RiveRendererWrapper::draw_image_mesh(Ref<RiveImage> image,
     }
 
     renderer->drawImageMesh(image->get_render_image(),
-                            rive::ImageSampler::LinearClamp(),
+                            rive::ImageSampler::SamplerFromKey(sampler_key),
                             vb, ub, ib,
                             (uint32_t)vcount,
                             (uint32_t)icount,
                             (rive::BlendMode)blend_mode,
                             opacity);
 }
-
-// --- RiveImage ---
 
 void RiveImage::_bind_methods() {
     ClassDB::bind_method(D_METHOD("load_from_buffer", "bytes"), &RiveImage::load_from_buffer);
@@ -948,8 +1047,6 @@ RiveImage::~RiveImage() {
     if (!rive_integration::run_on_rive_render_thread([this]() {
             render_image.reset();
         })) {
-        // Renderer teardown normally destroys scene resources before removing
-        // the RenderingServer. Avoid leaking if destruction happens later.
         render_image.reset();
     }
 }
@@ -966,8 +1063,6 @@ bool RiveImage::load_from_buffer(PackedByteArray bytes) {
 
         rive::Span<const uint8_t> span(bytes.ptr(), (size_t)bytes.size());
         rive::rcp<rive::RenderImage> next_image = factory->decodeImage(span);
-        // Both replacing the old image and dropping its final reference must
-        // happen on the render thread.
         render_image = std::move(next_image);
         if (render_image) {
             width = render_image->width();
@@ -995,8 +1090,6 @@ bool RiveImage::load_from_texture(Ref<Texture2D> texture) {
     return load_from_buffer(png);
 }
 
-// --- RiveGradient ---
-
 void RiveGradient::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_linear", "from", "to"), &RiveGradient::set_linear);
     ClassDB::bind_method(D_METHOD("set_radial", "center", "radius"), &RiveGradient::set_radial);
@@ -1005,15 +1098,15 @@ void RiveGradient::_bind_methods() {
 
 void RiveGradient::set_linear(Vector2 from, Vector2 to) {
     is_radial = false;
-    sx = from.x; sy = from.y;
-    ex = to.x; ey = to.y;
+    linear_start = from;
+    linear_end = to;
     dirty = true;
 }
 
 void RiveGradient::set_radial(Vector2 center, float radius) {
     is_radial = true;
-    sx = center.x; sy = center.y;
-    ex = radius; ey = 0.0f;
+    radial_center = center;
+    radial_radius = radius;
     dirty = true;
 }
 
@@ -1041,9 +1134,11 @@ rive::rcp<rive::RenderShader> RiveGradient::get_shader_rcp(rive::Factory* factor
             stop_floats[i] = stops[i];
         }
         if (is_radial) {
-            shader = factory->makeRadialGradient(sx, sy, ex, color_ints.data(), stop_floats.data(), count);
+            shader = factory->makeRadialGradient(radial_center.x, radial_center.y, radial_radius,
+                    color_ints.data(), stop_floats.data(), count);
         } else {
-            shader = factory->makeLinearGradient(sx, sy, ex, ey, color_ints.data(), stop_floats.data(), count);
+            shader = factory->makeLinearGradient(linear_start.x, linear_start.y, linear_end.x, linear_end.y,
+                    color_ints.data(), stop_floats.data(), count);
         }
         dirty = false;
     }
@@ -1054,9 +1149,12 @@ rive::RenderShader* RiveGradient::get_shader(rive::Factory* factory) {
     return get_shader_rcp(factory).get();
 }
 
-// --- RiveFont ---
-
 void RiveFont::_bind_methods() {
+    ClassDB::bind_method(D_METHOD("get_axes"), &RiveFont::get_axes);
+    ClassDB::bind_method(D_METHOD("get_features"), &RiveFont::get_features);
+    ClassDB::bind_method(D_METHOD("with_options", "variations", "features"), &RiveFont::with_options, DEFVAL(Dictionary()));
+    ClassDB::bind_static_method("RiveFont", D_METHOD("set_fallback_fonts", "fonts"), &RiveFont::set_fallback_fonts);
+    ClassDB::bind_static_method("RiveFont", D_METHOD("clear_fallback_fonts"), &RiveFont::clear_fallback_fonts);
     ClassDB::bind_method(D_METHOD("load_from_buffer", "bytes"), &RiveFont::load_from_buffer);
     ClassDB::bind_method(D_METHOD("load_from_file", "path"), &RiveFont::load_from_file);
     ClassDB::bind_method(D_METHOD("is_loaded"), &RiveFont::is_loaded);
@@ -1098,14 +1196,12 @@ Array RiveFont::shape_text(String text, float size) {
     Array out;
     if (!font || text.length() == 0 || size <= 0.0f) return out;
 
-    // Convert Godot UTF-32 String to a vector of Unichar.
     std::vector<rive::Unichar> unichars;
     unichars.reserve(text.length());
     for (int i = 0; i < text.length(); i++) {
         unichars.push_back((rive::Unichar)text[i]);
     }
 
-    // Single-run shaping with this font/size.
     rive::TextRun run;
     run.font = font;
     run.size = size;
@@ -1128,8 +1224,6 @@ Array RiveFont::shape_text(String text, float size) {
             for (size_t gi = 0; gi < gr.glyphs.size(); gi++) {
                 rive::GlyphID gid = gr.glyphs[gi];
                 rive::RawPath glyph_path = gr.font->getPath(gid);
-                // Glyph path is at 1pt; scale to requested size and apply
-                // baseline x offset (xpos[gi]) + per-glyph offset.
                 float gx = gr.xpos[gi] + gr.offsets[gi].x;
                 float gy = gr.offsets[gi].y;
                 Ref<RivePath> rp;
@@ -1182,9 +1276,20 @@ Array RiveFont::shape_text(String text, float size) {
     return out;
 }
 
-// --- RiveText ---
-
 void RiveText::_bind_methods() {
+    BIND_ENUM_CONSTANT(DIRECTION_AUTO); BIND_ENUM_CONSTANT(DIRECTION_LTR); BIND_ENUM_CONSTANT(DIRECTION_RTL);
+    BIND_ENUM_CONSTANT(LOGICAL_NONE); BIND_ENUM_CONSTANT(LOGICAL_START); BIND_ENUM_CONSTANT(LOGICAL_END);
+    BIND_ENUM_CONSTANT(WRAP_ENABLED); BIND_ENUM_CONSTANT(WRAP_DISABLED);
+    BIND_ENUM_CONSTANT(BREAK_WORD); BIND_ENUM_CONSTANT(BREAK_NORMAL); BIND_ENUM_CONSTANT(BREAK_ALL);
+    ClassDB::bind_method(D_METHOD("set_direction", "direction"), &RiveText::set_direction);
+    ClassDB::bind_method(D_METHOD("get_direction"), &RiveText::get_direction);
+    ClassDB::bind_method(D_METHOD("set_logical_align", "align"), &RiveText::set_logical_align);
+    ClassDB::bind_method(D_METHOD("get_logical_align"), &RiveText::get_logical_align);
+    ClassDB::bind_method(D_METHOD("set_wrap", "wrap"), &RiveText::set_wrap);
+    ClassDB::bind_method(D_METHOD("get_wrap"), &RiveText::get_wrap);
+    ClassDB::bind_method(D_METHOD("set_word_break", "word_break"), &RiveText::set_word_break);
+    ClassDB::bind_method(D_METHOD("get_word_break"), &RiveText::get_word_break);
+    ClassDB::bind_method(D_METHOD("get_lines"), &RiveText::get_lines);
     ClassDB::bind_method(D_METHOD("clear"), &RiveText::clear);
     ClassDB::bind_method(D_METHOD("append_run", "text", "font", "paint", "size", "line_height", "letter_spacing"), &RiveText::append_run);
     ClassDB::bind_method(D_METHOD("render", "renderer", "override_paint"), &RiveText::render);
@@ -1225,6 +1330,35 @@ void RiveText::_apply_props() {
     raw_text->maxWidth(max_width);
     raw_text->maxHeight(max_height);
     raw_text->paragraphSpacing(paragraph_spacing);
+    raw_text->directionFlag(direction);
+    raw_text->logicalAlign(static_cast<rive::RawText::LogicalAlign>(logical_align));
+    raw_text->wrap(static_cast<rive::TextWrap>(wrap));
+    raw_text->wordBreak(static_cast<rive::TextWordBreak>(word_break));
+}
+
+void RiveText::_refresh_run_paints() {
+    if (!raw_text || run_texts.is_empty()) return;
+    rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
+    if (!factory) return;
+    std::vector<rive::rcp<rive::RenderPaint>> next_paints;
+    next_paints.reserve(run_texts.size());
+    bool changed = false;
+    for (int i = 0; i < run_texts.size(); ++i) {
+        rive::RenderPaint* native = run_paints[i].is_valid()
+            ? run_paints[i]->get_render_paint(factory) : nullptr;
+        if (native != run_native_paints[i].get()) changed = true;
+        if (native) native->ref();
+        next_paints.emplace_back(native);
+    }
+    if (!changed) return;
+    raw_text->clear();
+    _apply_props();
+    for (int i = 0; i < run_texts.size(); ++i) {
+        raw_text->append(std::string(run_texts[i].utf8().get_data()), next_paints[i],
+                         run_fonts[i]->get_font(), run_sizes[i], run_line_heights[i],
+                         run_letter_spacings[i]);
+    }
+    run_native_paints = std::move(next_paints);
 }
 
 void RiveText::clear() {
@@ -1234,7 +1368,9 @@ void RiveText::clear() {
     run_fonts.clear();
     run_texts.clear();
     run_sizes.clear();
+    run_line_heights.clear();
     run_letter_spacings.clear();
+    run_native_paints.clear();
 }
 
 void RiveText::append_run(String text, Ref<RiveFont> p_font, Ref<RivePaint> p_paint, float size, float line_height, float letter_spacing) {
@@ -1250,27 +1386,22 @@ void RiveText::append_run(String text, Ref<RiveFont> p_font, Ref<RivePaint> p_pa
     rive::rcp<rive::RenderPaint> paint_rcp;
     rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
     if (p_paint.is_valid()) {
-        // Borrow the paint's RenderPaint via an rcp that does NOT take ownership of the Godot ref.
-        // Easiest: keep p_paint alive in run_paints, and create an rcp wrapping its render paint
-        // by ref'ing it.
-        rive::RenderPaint* rp = p_paint->get_render_paint(factory);
-        if (rp) {
-            // safe_rcp() pattern: ref then construct rcp.
-            rp->ref();
-            paint_rcp = rive::rcp<rive::RenderPaint>(rp);
-        }
+        paint_rcp = rive::ref_rcp(p_paint->get_render_paint(factory));
     }
     std::string std_text = std::string(text.utf8().get_data());
     raw_text->append(std_text, paint_rcp, p_font->get_font(), size, line_height, letter_spacing);
+    run_native_paints.push_back(paint_rcp);
     run_fonts.push_back(p_font);
     run_texts.push_back(text);
     run_sizes.push_back(size);
+    run_line_heights.push_back(line_height);
     run_letter_spacings.push_back(letter_spacing);
-    if (p_paint.is_valid()) run_paints.push_back(p_paint);
+    run_paints.push_back(p_paint);
 }
 
 void RiveText::render(Ref<RiveRendererWrapper> renderer, Ref<RivePaint> override_paint) {
     if (!raw_text || renderer.is_null() || !renderer->get_renderer()) return;
+    _refresh_run_paints();
     rive::rcp<rive::RenderPaint> override_rcp;
     if (override_paint.is_valid()) {
         rive::Factory* factory = RiveRenderRegistry::get_singleton()->get_factory();
@@ -1293,8 +1424,6 @@ Array RiveText::shape_glyphs() {
     Array out;
     if (run_texts.size() == 0) return out;
 
-    // Concatenate all runs into one Unichar array and build matching TextRun
-    // metadata.
     std::vector<rive::Unichar> unichars;
     std::vector<rive::TextRun> runs;
     runs.reserve(run_texts.size());
@@ -1329,7 +1458,6 @@ Array RiveText::shape_glyphs() {
         const rive::Paragraph& para = paragraphs[pi];
         for (size_t ri = 0; ri < para.runs.size(); ri++) {
             const rive::GlyphRun& gr = para.runs[ri];
-            // Resolve which RivePaint to associate with this glyph run.
             Ref<RivePaint> paint_for_run;
             if ((int)gr.styleId < run_paints.size()) {
                 paint_for_run = run_paints[gr.styleId];

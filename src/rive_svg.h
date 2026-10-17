@@ -6,7 +6,6 @@
 #include "resources/rive_types.h"
 #include "rive/math/mat2d.hpp"
 
-// Forward declarations
 namespace rive {
     class Artboard;
     class ArtboardInstance;
@@ -22,7 +21,7 @@ public:
         Ref<RivePath> path;
         Ref<RivePaint> paint;
         rive::Mat2D transform;
-        float cx, cy; // Center for animation
+        float cx, cy;
     };
 
     struct Data : public RefCounted {
@@ -34,7 +33,7 @@ private:
 
     std::unique_ptr<rive::Artboard> source_artboard;
     std::unique_ptr<rive::ArtboardInstance> artboard_instance;
-    Ref<RiveSVG> base_svg; // Keep source alive if this is an instance
+    Ref<RiveSVG> source_svg;
 
 protected:
     static void _bind_methods();
@@ -51,4 +50,4 @@ public:
     Ref<RiveSVG> instance();
 };
 
-#endif // RIVE_SVG_H
+#endif

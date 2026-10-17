@@ -4,6 +4,7 @@
 #include <godot_cpp/classes/editor_plugin.hpp>
 #include <godot_cpp/classes/editor_import_plugin.hpp>
 #include "rive_inspector_plugin.h"
+#include "rive_export_plugin.h"
 
 using namespace godot;
 
@@ -33,6 +34,7 @@ class RiveEditorPlugin : public EditorPlugin {
 private:
     Ref<RiveImportPlugin> import_plugin;
     Ref<RiveInspectorPlugin> inspector_plugin;
+    Ref<RiveExportPlugin> export_plugin;
 
 protected:
     static void _bind_methods();

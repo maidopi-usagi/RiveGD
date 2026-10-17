@@ -161,12 +161,8 @@ public:
         command.indices = std::move(p_indices);
         command.vertex_count = p_vertex_count;
         command.index_count = p_index_count;
-        // Instances are edited in place by particle simulation. Copy the data
-        // now so later edits cannot alter this recording's UVs or transforms.
         const auto data = p_instances->instanceData();
         command.instance_data.assign(data.begin(), data.end());
-        // Keep any factory-specific resource wrapper alive until commands
-        // are cleared on the render thread; replay uses the immutable copy.
         command.instance_source = std::move(p_instances);
         commands.push_back(std::move(command));
     }
@@ -217,13 +213,13 @@ public:
                            uint32_t p_vertex_count,
                            uint32_t p_index_count,
                            int p_blend_mode,
-                           float p_opacity) override {
+                           float p_opacity, int p_sampler_key) override {
         if (!p_image || !p_vertices || !p_uv_coords || !p_indices ||
             p_vertex_count == 0 || p_index_count == 0) return;
         RiveRecordedCommand command;
         command.type = RiveRecordedCommandType::DRAW_IMAGE_MESH;
         command.image = rive::ref_rcp(const_cast<rive::RenderImage *>(p_image));
-        command.sampler = rive::ImageSampler::LinearClamp();
+        command.sampler = rive::ImageSampler::SamplerFromKey(p_sampler_key);
         command.vertex_count = p_vertex_count;
         command.index_count = p_index_count;
         command.blend_mode = static_cast<rive::BlendMode>(p_blend_mode);

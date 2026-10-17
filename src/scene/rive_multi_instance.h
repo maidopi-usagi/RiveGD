@@ -3,9 +3,8 @@
 
 #include "rive_node.h"
 #include "../resources/rive_file.h"
-#include <rive/artboard.hpp>
-#include <rive/animation/state_machine_instance.hpp>
-#include <rive/animation/linear_animation_instance.hpp>
+#include "rive_player.h"
+#include <godot_cpp/variant/typed_array.hpp>
 
 using namespace godot;
 
@@ -14,28 +13,18 @@ class RiveMultiInstance : public RiveNode {
 
 private:
     Ref<RiveFile> rive_file_resource;
-    std::unique_ptr<rive::ArtboardInstance> artboard;
-    std::unique_ptr<rive::StateMachineInstance> state_machine;
-    std::unique_ptr<rive::LinearAnimationInstance> animation;
-    rive::rcp<rive::File> retained_file;
-
-    void _release_playable_on_render_thread();
+    Ref<RivePlayer> rive_player;
     
     String artboard_name;
     String state_machine_name;
     String animation_name;
-    bool auto_play = true;
+    bool future_active = true;
+    String load_error;
 
-    PackedVector2Array positions;
-    PackedFloat32Array scales;
-    PackedFloat32Array rotations;
-    // Or just a list of Transforms, but Godot usually exposes Arrays.
-    // For simplicity, let's use a PackedVector2Array for positions first, 
-    // maybe later full transforms.
-    // Let's use Transform2D array for maximum flexibility.
-    Array transforms; 
+    TypedArray<Transform2D> transforms;
 
     bool _load_artboard();
+    void _advance_player(double p_delta, bool p_automatic);
     void _on_rive_file_changed();
 
 protected:
@@ -62,11 +51,16 @@ public:
     bool get_auto_play() const;
 
     void set_transforms(const Array &p_transforms);
-    Array get_transforms() const;
+    TypedArray<Transform2D> get_transforms() const;
+    Ref<RivePlayer> get_rive_player() const override { return rive_player; }
+    Ref<RiveViewModelInstance> get_view_model_instance() const;
 
     void advance(double delta) override;
+    void advance_rive_automatically(double delta) override;
     void draw(rive::Renderer *renderer) override;
     Rect2 get_rive_bounds() const override;
+    bool wants_continuous_redraw() const override { return get_update_mode() == UPDATE_ALWAYS; }
+    PackedStringArray _get_configuration_warnings() const override;
 };
 
 #endif

@@ -70,9 +70,6 @@ static bool ensure_intermediate_texture(RiveD3D12FrameState &frame_state, ID3D12
 		frame_state.intermediate_height == height && frame_state.intermediate_format == format) {
 		return true;
 	}
-	// The caller waits for this frame slot's fence before reaching here, so its
-	// private intermediate texture can be replaced without touching another
-	// in-flight slot.
 	frame_state.intermediate_texture.Reset();
 	frame_state.intermediate_width = 0;
 	frame_state.intermediate_height = 0;
@@ -154,7 +151,6 @@ bool create_d3d12_context(RenderingDevice* rd) {
 	g_frame_idx = 0;
 	g_current_frame_index = 0;
 
-	// Initialize frame states
 	g_frame_states.resize(kMaxFramesInFlight);
 	for (uint32_t i = 0; i < kMaxFramesInFlight; i++) {
 		if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&g_frame_states[i].command_allocator)))) {
@@ -165,20 +161,12 @@ bool create_d3d12_context(RenderingDevice* rd) {
 		g_frame_states[i].frame_number = 0;
 	}
 
-	// Create reusable command list (using the first allocator initially)
 	if (FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g_frame_states[0].command_allocator.Get(), nullptr, IID_PPV_ARGS(&g_command_list)))) {
 		UtilityFunctions::printerr("Rive: Failed to create command list");
 		return fail();
 	}
-	// Command list is created in recording state, but we need to close it to use it for initialization or reset it later.
-	// However, MakeContext expects an open command list?
-	// "MakeContext ... expects the command list to be in a recording state."
-	
-	// We can use g_command_list for MakeContext.
-
 	rive::gpu::D3DContextOptions options;
 	
-	// Detect Intel GPU
 	bool is_intel = false;
 	LUID luid = device->GetAdapterLuid();
 	ComPtr<IDXGIFactory4> factory;
@@ -204,8 +192,6 @@ bool create_d3d12_context(RenderingDevice* rd) {
 		UtilityFunctions::printerr("Rive: Failed to create RenderContext");
 		return fail();
 	}
-	// Publish ownership before any later fallible initialization so fail()
-	// can run the resource manager's mandatory shutdown contract.
 	g_rive_context = ctx.release();
 
 	if (FAILED(g_command_list->Close())) {
@@ -223,9 +209,6 @@ bool create_d3d12_context(RenderingDevice* rd) {
 		return fail();
 	}
 
-	// Create every synchronization primitive before submitting the context's
-	// initialization list. Otherwise an allocation failure here could leave GPU
-	// work in flight with no fence available for safe teardown.
 	ID3D12CommandList* ppCommandLists[] = { g_command_list.Get() };
 	g_command_queue->ExecuteCommandLists(1, ppCommandLists);
 
@@ -237,13 +220,6 @@ bool create_d3d12_context(RenderingDevice* rd) {
 	if (!wait_for_fence(g_fence_value, "initializing the renderer")) {
 		return fail();
 	}
-
-	// Reset the command list and allocator for the first frame usage?
-	// Actually, we should probably leave them closed and let render_texture handle the reset.
-	// But render_texture expects to reset them.
-	// The allocator used here was g_frame_states[0].command_allocator.
-	// We just executed it. We should probably wait for it to finish (which we did with the fence above).
-	// So it's safe to reset in render_texture.
 
 	RiveRenderRegistry::get_singleton()->set_factory(g_rive_context);
 
@@ -271,15 +247,12 @@ void render_texture_d3d12(RenderingDevice *rd, RID texture_rid, RiveDrawable *dr
 		return;
 	}
 
-	// Get current frame state
 	RiveD3D12FrameState &frame_state = g_frame_states[g_current_frame_index];
 
-	// Wait for the previous usage of this frame's allocator to finish
 	if (frame_state.fence_value != 0 && !wait_for_fence(frame_state.fence_value, "reusing a frame allocator")) {
 		return;
 	}
 
-	// Reset allocator and command list
 	if (FAILED(frame_state.command_allocator->Reset())) {
 		UtilityFunctions::printerr("Rive: Failed to reset command allocator");
 		return;
@@ -374,30 +347,23 @@ void render_texture_d3d12(RenderingDevice *rd, RID texture_rid, RiveDrawable *dr
 		return;
 	}
 
-	// Store the fence value for this frame so we can wait for it next time we use this slot
 	frame_state.fence_value = g_fence_value;
 	frame_state.frame_number = g_frame_idx;
 
-	// Advance frame index
 	g_current_frame_index = (g_current_frame_index + 1) % kMaxFramesInFlight;
 }
 
 void cleanup_d3d12_context() {
 	if (g_command_queue && g_fence && g_fence_event) {
-		// Wait for GPU to finish all work
 		g_fence_value++;
 		if (SUCCEEDED(g_command_queue->Signal(g_fence.Get(), g_fence_value))) {
 			wait_for_fence(g_fence_value, "shutting down the renderer");
 		}
 	}
 
-	// Render targets hold backend objects owned by the context and must be
-	// released before the context itself.
 	RiveRenderRegistry::get_singleton()->clear_renderer_states();
 	RiveRenderRegistry::get_singleton()->set_factory(nullptr);
 	if (g_rive_context) {
-		// D3D12 GPU resources are held in a deferred-deletion purgatory. The
-		// manager contract requires an explicit shutdown before destruction.
 		rive::gpu::RenderContextD3D12Impl *impl =
 			g_rive_context->static_impl_cast<rive::gpu::RenderContextD3D12Impl>();
 		if (impl && impl->manager()) {
@@ -407,7 +373,6 @@ void cleanup_d3d12_context() {
 		g_rive_context = nullptr;
 	}
 
-	// Release D3D12 resources
 	g_command_list.Reset();
 	g_frame_states.clear();
 	g_command_queue.Reset();
@@ -422,4 +387,4 @@ void cleanup_d3d12_context() {
 	}
 }
 
-} // namespace rive_integration
+}

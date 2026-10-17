@@ -4,6 +4,7 @@
 #include "rive_node.h"
 #include "../resources/rive_file.h"
 #include "rive_player.h"
+#include <unordered_set>
 
 using namespace godot;
 
@@ -18,7 +19,12 @@ private:
     String state_machine_name;
     String animation_name;
     
-    bool auto_play = true;
+    bool future_active = true;
+    String load_error;
+    std::unordered_set<int> pressed_pointer_ids;
+
+    bool _dispatch_pointer(Vector2 p_position, int p_kind, int p_pointer_id);
+    void _advance_player(double p_delta, bool p_automatic);
 
     bool _load_artboard();
     void _on_rive_file_changed();
@@ -47,12 +53,15 @@ public:
     bool get_auto_play() const;
 
     void advance(double delta) override;
+    void advance_rive_automatically(double delta) override;
     void draw(rive::Renderer *renderer) override;
     Rect2 get_rive_bounds() const override;
 
-    // Editor integration
     void _draw() override;
     void _input(const Ref<InputEvent> &p_event) override;
+    void _unhandled_input(const Ref<InputEvent> &p_event) override;
+    PackedStringArray _get_configuration_warnings() const override;
+    bool wants_continuous_redraw() const override { return get_update_mode() == UPDATE_ALWAYS; }
     
     bool hit_test(Vector2 point);
 
@@ -60,7 +69,12 @@ public:
     void pointer_up(Vector2 position) override;
     void pointer_move(Vector2 position) override;
 
+    bool pointer_down_with_id(Vector2 p_position, int p_pointer_id = 0);
+    bool pointer_up_with_id(Vector2 p_position, int p_pointer_id = 0);
+    bool pointer_move_with_id(Vector2 p_position, int p_pointer_id = 0);
+
     Ref<RiveViewModelInstance> get_view_model_instance() const;
+    Ref<RivePlayer> get_rive_player() const override { return rive_player; }
 };
 
 #endif

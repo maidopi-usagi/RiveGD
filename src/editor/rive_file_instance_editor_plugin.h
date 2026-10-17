@@ -11,7 +11,8 @@ using namespace godot;
 class RiveFileInstanceEditor : public Control {
     GDCLASS(RiveFileInstanceEditor, Control);
 
-    HBoxContainer *top_hb = nullptr;
+    HBoxContainer *toolbar = nullptr;
+    ObjectID toolbar_id;
     RiveFileInstance *node = nullptr;
 
 protected:
@@ -20,8 +21,9 @@ protected:
 
 public:
     RiveFileInstanceEditor();
+    ~RiveFileInstanceEditor();
     void edit(RiveFileInstance *p_node);
-    HBoxContainer *get_top_hb() { return top_hb; }
+    HBoxContainer *get_toolbar() { return toolbar; }
     RiveFileInstance *get_node() { return node; }
 };
 
@@ -30,11 +32,9 @@ class RiveFileInstanceEditorPlugin : public EditorPlugin {
 
     RiveFileInstanceEditor *rive_editor = nullptr;
 
-    // Handle interaction state
     int dragging_handle = -1;
     int hovering_handle = -1;
 
-    // Drag state (captured when drag begins)
     Vector2 drag_anchor_parent;
     Vector2 drag_start_scale;
     Vector2 drag_start_pos;

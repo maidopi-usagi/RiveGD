@@ -30,7 +30,6 @@ public:
     RiveTextureTarget();
     ~RiveTextureTarget();
 
-    // Returns true when a valid target exists after the call.
     bool resize(Size2i new_size);
     
     RID get_texture_rid() const { return texture_rid; }
@@ -41,4 +40,4 @@ public:
     void clear();
 };
 
-#endif // RIVE_TEXTURE_TARGET_H
+#endif

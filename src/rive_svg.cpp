@@ -12,12 +12,8 @@
 #include "rive/factory.hpp"
 #include "rive/importers/artboard_importer.hpp"
 
-// Custom Drawable to render SVG shapes
 class RiveSVGDrawable : public rive::Drawable {
 public:
-    // Instances can outlive the RiveFile resource that created them (for
-    // example during a failed hot reload), so the drawable keeps its shape
-    // data alive explicitly.
     Ref<RiveSVG::Data> data;
 
     RiveSVGDrawable() {}
@@ -37,8 +33,6 @@ public:
     
     void copy(const rive::Core& source) {
         rive::Drawable::copy(static_cast<const rive::DrawableBase&>(source));
-        // Note: is<RiveSVGDrawable> checks Drawable::typeKey, so it matches any Drawable.
-        // But we know we are cloning RiveSVGDrawable.
         if (source.is<RiveSVGDrawable>()) {
             auto src = static_cast<const RiveSVGDrawable&>(source);
             data = src.data;
@@ -91,7 +85,7 @@ RiveSVG::~RiveSVG() {
     if (source_artboard) {
         source_artboard.reset();
     }
-    base_svg.unref();
+    source_svg.unref();
 }
 
 void RiveSVG::_bind_methods() {
@@ -113,13 +107,11 @@ void RiveSVG::load_file(String path) {
 void RiveSVG::parse(String xml_content) {
     data->shapes.clear();
     
-    // nanosvg expects a char* string and modifies it.
     CharString cs = xml_content.utf8();
     std::vector<char> input_data(cs.length() + 1);
     memcpy(input_data.data(), cs.get_data(), cs.length());
     input_data[cs.length()] = '\0';
     
-    // Parse with 96 DPI (standard)
     NSVGimage* image = nsvgParse(input_data.data(), "px", 96.0f);
     if (!image) {
         UtilityFunctions::printerr("Failed to parse SVG content");
@@ -148,7 +140,6 @@ void RiveSVG::parse(String xml_content) {
             }
         }
         
-        // Fill
         bool has_fill = false;
         unsigned int fill_color = 0;
 
@@ -164,7 +155,7 @@ void RiveSVG::parse(String xml_content) {
         if (has_fill) {
             Ref<RivePaint> paint;
             paint.instantiate();
-            paint->set_style(1); // Fill (Rive: 1=Fill, 0=Stroke)
+            paint->set_style(RivePaint::STYLE_FILL);
             
             unsigned int c = fill_color;
             float r = (float)(c & 0xFF) / 255.0f;
@@ -180,7 +171,6 @@ void RiveSVG::parse(String xml_content) {
             data->shapes.push_back({path, paint, rive::Mat2D(), cx, cy});
         }
         
-        // Stroke
         bool has_stroke = false;
         unsigned int stroke_color = 0;
 
@@ -196,7 +186,7 @@ void RiveSVG::parse(String xml_content) {
         if (has_stroke) {
             Ref<RivePaint> paint;
             paint.instantiate();
-            paint->set_style(0); // Stroke (Rive: 1=Fill, 0=Stroke)
+            paint->set_style(RivePaint::STYLE_STROKE);
             
             unsigned int c = stroke_color;
             float r = (float)(c & 0xFF) / 255.0f;
@@ -207,14 +197,14 @@ void RiveSVG::parse(String xml_content) {
             paint->set_color(Color(r, g, b, a));
             paint->set_thickness(shape->strokeWidth);
             
-            int cap = 0; // Butt
-            if (shape->strokeLineCap == NSVG_CAP_ROUND) cap = 1;
-            else if (shape->strokeLineCap == NSVG_CAP_SQUARE) cap = 2;
+            int cap = RivePaint::CAP_BUTT;
+            if (shape->strokeLineCap == NSVG_CAP_ROUND) cap = RivePaint::CAP_ROUND;
+            else if (shape->strokeLineCap == NSVG_CAP_SQUARE) cap = RivePaint::CAP_SQUARE;
             paint->set_cap(cap);
             
-            int join = 0; // Miter
-            if (shape->strokeLineJoin == NSVG_JOIN_ROUND) join = 1;
-            else if (shape->strokeLineJoin == NSVG_JOIN_BEVEL) join = 2;
+            int join = RivePaint::JOIN_MITER;
+            if (shape->strokeLineJoin == NSVG_JOIN_ROUND) join = RivePaint::JOIN_ROUND;
+            else if (shape->strokeLineJoin == NSVG_JOIN_BEVEL) join = RivePaint::JOIN_BEVEL;
             paint->set_join(join);
             
             float cx = (shape->bounds[0] + shape->bounds[2]) * 0.5f;
@@ -224,18 +214,13 @@ void RiveSVG::parse(String xml_content) {
         }
     }
     
-    // Create Artboard
     source_artboard = std::make_unique<rive::Artboard>();
-    // Artboard is the root, so it shouldn't have a parent. 
-    // Default parentId is 0, which resolves to itself (index 0), causing infinite loops in hierarchy traversal.
     source_artboard->parentId(source_artboard->emptyId);
     
     auto drawable = new RiveSVGDrawable();
     drawable->data = data;
     
-    // Use ArtboardImporter to add object to private list
     rive::ArtboardImporter importer(source_artboard.get());
-    // IMPORTANT: Artboard must be the first object in m_Objects (index 0)
     importer.addComponent(source_artboard.get());
     importer.addComponent(drawable);
     
@@ -245,7 +230,6 @@ void RiveSVG::parse(String xml_content) {
         source_artboard->width(image->width);
         source_artboard->height(image->height);
     }
-    // Disable clip to avoid using m_Factory which is null
     source_artboard->clip(false);
 
     artboard_instance = source_artboard->instance();
@@ -286,14 +270,14 @@ Ref<RiveSVG> RiveSVG::instance() {
     new_svg.instantiate();
     
     if (source_artboard) {
-        new_svg->base_svg = Ref<RiveSVG>(this);
+        new_svg->source_svg = Ref<RiveSVG>(this);
         new_svg->artboard_instance = source_artboard->instance();
         if (new_svg->artboard_instance) {
             new_svg->artboard_instance->advance(0.0f);
         }
-    } else if (base_svg.is_valid() && base_svg->source_artboard) {
-        new_svg->base_svg = base_svg;
-        new_svg->artboard_instance = base_svg->source_artboard->instance();
+    } else if (source_svg.is_valid() && source_svg->source_artboard) {
+        new_svg->source_svg = source_svg;
+        new_svg->artboard_instance = source_svg->source_artboard->instance();
         if (new_svg->artboard_instance) {
             new_svg->artboard_instance->advance(0.0f);
         }

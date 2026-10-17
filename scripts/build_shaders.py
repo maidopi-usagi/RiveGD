@@ -45,7 +45,6 @@ def minify_shaders(shaders_dir, out_dir, platform):
         raise RuntimeError(f"No GLSL shader inputs in {shaders_dir}")
     command = [sys.executable, shaders_dir / "minify.py", "-o", out_dir]
     if platform == "windows":
-        # Upstream emits character arrays for MSVC's string-literal limit.
         command.append("--msvc")
     run(command + inputs)
     return [out_dir / (path.name + suffix) for path in inputs for suffix in (".exports.h", ".hpp")] + [
@@ -170,9 +169,7 @@ def spirv_optimizer_parameters(filename, variant):
             "--cfg-cleanup", "--eliminate-dead-const", "--eliminate-dead-variables",
             "--eliminate-dead-functions", "--eliminate-dead-code-aggressive",
         ]
-    # Adreno 5/6xx on Android 9/10 requires merge-return and exhaustive
-    # entry-point inlining to link fragment pipelines. Do not replace this
-    # sequence with -O: its simplify-instructions pass breaks Adreno drivers.
+    # Adreno needs these passes; -O's simplify-instructions breaks its drivers.
     return parameters + [
         "--wrap-opkill", "--eliminate-dead-branches", "--merge-return",
         "--inline-entry-points-exhaustive", "--eliminate-dead-functions",
@@ -201,8 +198,6 @@ def shader_generation_policy(platform):
             "Android shader generation requires spirv-opt for Adreno driver workarounds. "
             "Install SPIRV-Tools or set SPIRV_OPT to spirv-opt."
         )
-    # Include availability and the selected policy in the cache key, so adding
-    # the optimizer to a desktop toolchain cannot reuse unoptimized shaders.
     return {"spirv_optimizer": optimizer, "spirv_policy": "rive-driver-safe" if optimizer else "unoptimized-desktop"}
 
 
@@ -224,8 +219,6 @@ def generate_vulkan_shaders(shaders_dir, out_dir, optimizer=None):
                               "STORAGE_TEXTURE" if "clockwise" in filename and "clockwise_atomic" not in filename
                               else "SUBPASS_LOAD")
             parameters.append(f"-DPLS_IMPL_{implementation}")
-        # TARGET_SPIRV replaces the old TARGET_VULKAN entry point. Match the
-        # upstream compile definitions, including depth/stencil and MSAA variants.
         unoptimized = Path(str(binary) + ".unoptimized") if optimizer else binary
         run([glslang, "-S", stage, "-DTARGET_SPIRV", *parameters, "-I" + str(out_dir),
              "-V", *defines, "-o", unoptimized, source])
@@ -288,8 +281,6 @@ def main():
     platform = "linux" if args.platform == "linuxbsd" else args.platform
     generation_policy = shader_generation_policy(platform)
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Embedded GLSL differs for MSVC, so changing platform must invalidate the
-    # shared outputs rather than leave a previous platform's cache valid.
     manifest = out_dir / ".rivegd-shaders.json"
     digest = source_digest(shaders_dir, generation_policy)
     if manifest.exists() and not args.force:

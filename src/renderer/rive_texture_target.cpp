@@ -71,7 +71,6 @@ void RiveTextureTarget::resize_on_render_thread(Size2i new_size) {
 
     RenderingDevice *rd = rs->get_rendering_device();
     
-    // Check if we are using OpenGL (no RD)
     String driver = rs->get_current_rendering_driver_name();
     bool is_opengl = (driver == "opengl3");
 

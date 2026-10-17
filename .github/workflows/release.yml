@@ -13,6 +13,8 @@ on:
       - "third-party/rive-runtime"
       - ".gitmodules"
       - "project/addons/godot-rive/godot-rive.gdextension"
+      - "project/addons/godot-rive/helpers/**"
+      - "project/assets/fonts/InterVariable.ttf"
   release:
     types: [published]
   workflow_dispatch:
@@ -378,6 +380,7 @@ jobs:
           mkdir -p "$addon_stage/bin"
           cp "$addon_source/godot-rive.gdextension" "$addon_stage/"
           cp "$addon_source/godot-rive.gdextension.uid" "$addon_stage/"
+          cp -R "$addon_source/helpers" "$addon_stage/helpers"
           cp -R "$addon_source/$artifact" "$addon_stage/bin/"
           printf '%s\n' "$artifact" > "$addon_stage/artifact-manifest.txt"
 
@@ -422,6 +425,12 @@ jobs:
           - godot_version: "4.6"
             archive_sha512: 0c1bc5e8dca8f892a9a5fd0628b742f399fbd520e5f0051ecac021c0aa4ea5a8f0d237c8ed6b767b2afda7f7a4b32001118f1b04a82e335a5e35b947a1217940
     steps:
+      - name: Checkout smoke-test scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: false
+          fetch-depth: 1
+
       - name: Download Linux debug artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -507,6 +516,188 @@ jobs:
             exit 1
           fi
 
+      - name: Download and verify pinned ViewModel fixtures
+        shell: bash
+        env:
+          RIVE_FIXTURE_COMMIT: 820cc19bd8405f84a8f85f9f388a133d6a2c7511
+        run: |
+          set -euo pipefail
+          fixture_dir="third-party/rive-runtime/tests/unit_tests/assets"
+          mkdir -p "$fixture_dir"
+          while read -r checksum filename; do
+            mkdir -p "$(dirname "$fixture_dir/$filename")"
+            curl --fail --location --show-error --silent \
+              --output "$fixture_dir/$filename" \
+              "https://raw.githubusercontent.com/rive-app/rive-runtime/$RIVE_FIXTURE_COMMIT/tests/unit_tests/assets/$filename"
+            echo "$checksum  $fixture_dir/$filename" | sha256sum --check --strict
+          done <<'FIXTURES'
+          054219ac8b15e384c8026c1ba9340385300fd00c649d8b787671d0d6fd7493b8 data_bind_test_cmdq.riv
+          8d3bdbfafc41b7a18b6052c69a40b953a0d4b388b806e2fce9ea9db3ade42299 data_bind_font_test.riv
+          d32ce8f143fbb4fcda7eb09ef956a808d48e42f50a538f79284a70368a14b3aa data_binding_artboards_test.riv
+          051df46dd343275c427463a9e7c4fa39528b180d90eaaa8c5cb715b344a66bc4 kablammo.ttf
+          098490378578565b1b9e326a422cad54914bbaf6df68e373be3050265a399d86 nabla.ttf
+          d7153648bcf2d663429b21b6caec26e671c13b1ee8e3b90f0a9eaef7fd38c3fa timeline_event_test.riv
+          011407faa0f4eba9576556c4733e524d8989bc489d75ff35afba31ff88fc3598 event_on_listener.riv
+          6ddadcf1849216896a44fa1edaaa7617b21bfaab835e136de27dba61f98d0317 state_transition_fire_trigger.riv
+          37adafd045b466dd575e5cd8585d5339d0e5d62e8d8ec93dc42bb056888af30e out_of_band/walle.riv
+          6caae10389951be6a96bb1a6791de4db515ad07460c2751e8d6d4ddcf36c5e5b out_of_band/walle-370.png
+          442ae85346bd5422ef36738f535d6e6bf066b801b26d4d1889d871af108e2972 out_of_band/eve-317.png
+          FIXTURES
+
+      - name: Download and verify pinned official QoL samples
+        shell: bash
+        env:
+          RIVE_EXAMPLE_COMMIT: 58fcac2171f655757907356a4bead2ebd008e4f7
+        run: |
+          set -euo pipefail
+          sample_dir="$RUNNER_TEMP/rivegd-official-samples"
+          mkdir -p "$sample_dir"
+          while read -r checksum filename; do
+            curl --fail --location --show-error --silent \
+              --output "$sample_dir/$filename" \
+              "https://raw.githubusercontent.com/rive-app/rive-flutter/$RIVE_EXAMPLE_COMMIT/example/assets/$filename"
+            echo "$checksum  $sample_dir/$filename" | sha256sum --check --strict
+          done <<'SAMPLES'
+          12cc0f18866432afe84b923680f7aa9d074c175587ceb882d8f057a6aa3e141f lists_demo.riv
+          e153076afb9604a1dfda7f721053bf9fba9951b81e9aa54255fa3fa345a569d9 travel_icons_pack.riv
+          SAMPLES
+          echo "RIVE_QOL_SAMPLES=$sample_dir" >> "$GITHUB_ENV"
+
+      - name: Run ViewModel and scene-serialization regression with Vulkan
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s scripts/view_model_smoke_test.gd
+          set +e
+          timeout 120s xvfb-run --auto-servernum "$GODOT_BIN" \
+            --display-driver x11 \
+            --path smoke-project \
+            --rendering-method mobile \
+            --rendering-driver vulkan \
+            --render-thread safe \
+            --script "$GITHUB_WORKSPACE/scripts/view_model_smoke_test.gd" \
+            > godot-view-model-smoke.log 2>&1
+          status=$?
+          set -e
+          cat godot-view-model-smoke.log
+          test "$status" -eq 0
+          grep -F "RIVE_VIEW_MODEL_SMOKE_PASS:" godot-view-model-smoke.log
+          if grep -E \
+            "RIVE_VIEW_MODEL_SMOKE_FAIL:|Cannot open dynamic library|GDExtension.*(failed|error)|Rive renderer initialization failed|SCRIPT ERROR:" \
+            godot-view-model-smoke.log; then
+            exit 1
+          fi
+
+      - name: Run scene, binding, event, layout and texture integration regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s scripts/integration_smoke_test.gd
+          set +e
+          timeout 120s xvfb-run --auto-servernum "$GODOT_BIN" \
+            --display-driver x11 \
+            --path smoke-project \
+            --rendering-method mobile \
+            --rendering-driver vulkan \
+            --render-thread safe \
+            --resolution 1024x640 \
+            --script "$GITHUB_WORKSPACE/scripts/integration_smoke_test.gd" \
+            > godot-integration-smoke.log 2>&1
+          status=$?
+          set -e
+          cat godot-integration-smoke.log
+          test "$status" -eq 0
+          grep -F "RIVE_INTEGRATION_SMOKE_PASS:" godot-integration-smoke.log
+          if grep -E \
+            "RIVE_INTEGRATION_SMOKE_FAIL:|Cannot open dynamic library|GDExtension.*(failed|error)|Rive renderer initialization failed|SCRIPT ERROR:" \
+            godot-integration-smoke.log; then
+            exit 1
+          fi
+
+      - name: Run factories, presets, assets and repeated native lifecycle regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s scripts/qol_smoke_test.gd
+          set +e
+          timeout 120s xvfb-run --auto-servernum "$GODOT_BIN" \
+            --display-driver x11 \
+            --path smoke-project \
+            --rendering-method mobile \
+            --rendering-driver vulkan \
+            --render-thread safe \
+            --resolution 1024x640 \
+            --script "$GITHUB_WORKSPACE/scripts/qol_smoke_test.gd" \
+            -- "$RIVE_QOL_SAMPLES" \
+            > godot-qol-smoke.log 2>&1
+          status=$?
+          set -e
+          cat godot-qol-smoke.log
+          test "$status" -eq 0
+          grep -F "RIVE_QOL_SMOKE_PASS:" godot-qol-smoke.log
+          if grep -E \
+            "RIVE_QOL_SMOKE_FAIL:|Cannot open dynamic library|GDExtension.*(failed|error)|Rive renderer initialization failed|ERROR:|leaked|resources still in use" \
+            godot-qol-smoke.log; then
+            exit 1
+          fi
+
+      - name: Download pinned runtime API fixtures
+        shell: bash
+        env:
+          RIVE_FIXTURE_COMMIT: 820cc19bd8405f84a8f85f9f388a133d6a2c7511
+        run: |
+          set -euo pipefail
+          fixture_dir="third-party/rive-runtime/tests/unit_tests/assets"
+          while read -r checksum filename; do
+            mkdir -p "$(dirname "$fixture_dir/$filename")"
+            curl --fail --location --show-error --silent \
+              --output "$fixture_dir/$filename" \
+              "https://raw.githubusercontent.com/rive-app/rive-runtime/$RIVE_FIXTURE_COMMIT/tests/unit_tests/assets/$filename"
+            echo "$checksum  $fixture_dir/$filename" | sha256sum --check --strict
+          done <<'FIXTURES'
+          61a14d72c5b9694b675d729e756fd4e3d0a075bf76ed545d07b62c301af962a0 runtime_nested_inputs.riv
+          d7153648bcf2d663429b21b6caec26e671c13b1ee8e3b90f0a9eaef7fd38c3fa timeline_event_test.riv
+          c2ef8563c393c9f375338cd034d8298e72c4f910a449e929ef780348840457a7 two_bone_ik.riv
+          74b8d53be35399019c09b8f4cf36c0d4447df2c1825f79e9534772424fd07cb8 joystick_flag_test.riv
+          b8fe924f342d90fe601a668e3393988714346dfa643e3e1020cc9bbe2f77c330 gamepad_test.riv
+          46b47578e6dd6e70ecffac35449498275fd2ee8773efbc5cb04d22cad5fb7e58 data_bind_blob_test.riv
+          48f122b40bbe487690efc55057e1e9f42593a1b51fe93e4a2d40eaaa725f0fa0 list_index_script_access.riv
+          98fa6ed336edea620ef83f6d7a215fdb2cc1da3d0a8557ff1746f556ef1973ea new_text.riv
+          718b80e13fc25f89c34b66fb01732f7ea1eac924ff06ca6b2caa5ed882324a72 text_input.riv
+          3e28691c3d3d5f09ba4ca3393f7e8f82dc3fbd72d398a7d239688c2756191c94 semantic/simpsons.riv
+          1118a402b5eabda347c416e49391bdc156836abfc0aca93ae9f1fbddfab2af28 IBMPlexSansArabic-Regular.ttf
+          37adafd045b466dd575e5cd8585d5339d0e5d62e8d8ec93dc42bb056888af30e out_of_band/walle.riv
+          6caae10389951be6a96bb1a6791de4db515ad07460c2751e8d6d4ddcf36c5e5b out_of_band/walle-370.png
+          442ae85346bd5422ef36738f535d6e6bf066b801b26d4d1889d871af108e2972 out_of_band/eve-317.png
+          FIXTURES
+          mkdir -p smoke-project/assets/fonts
+          cp project/assets/fonts/InterVariable.ttf smoke-project/assets/fonts/
+          for helper in rive_accessibility_bridge rive_asset_loader rive_component_follower rive_text_selection; do
+            test -s "smoke-project/addons/godot-rive/helpers/$helper.gd"
+          done
+
+      - name: Run runtime API, helper and advanced vector regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          for suite in runtime_api runtime_helpers advanced_vector; do
+            log="godot-${suite}.log"
+            set +e
+            timeout 120s xvfb-run --auto-servernum "$GODOT_BIN" \
+              --display-driver x11 --path smoke-project \
+              --rendering-method mobile --rendering-driver vulkan \
+              --render-thread safe --resolution 1024x640 \
+              --script "$GITHUB_WORKSPACE/scripts/${suite}_smoke_test.gd" > "$log" 2>&1
+            status=$?
+            set -e
+            cat "$log"
+            test "$status" -eq 0
+            grep -F "${suite^^}_SMOKE_PASS" "$log"
+            if grep -E 'ERROR:|leaked|resources still in use|Cannot open dynamic library|Rive renderer initialization failed' "$log"; then
+              exit 1
+            fi
+          done
+
   package:
     name: Validate and package addon
     needs: [setup, build, smoke-linux]
@@ -535,9 +726,11 @@ jobs:
 
           cp "${sources[0]}/godot-rive.gdextension" "$addon/"
           cp "${sources[0]}/godot-rive.gdextension.uid" "$addon/"
+          cp -R "${sources[0]}/helpers" "$addon/helpers"
           for source in "${sources[@]}"; do
             cmp "$source/godot-rive.gdextension" "$addon/godot-rive.gdextension"
             cmp "$source/godot-rive.gdextension.uid" "$addon/godot-rive.gdextension.uid"
+            diff -r "$source/helpers" "$addon/helpers"
             test -s "$source/artifact-manifest.txt"
             IFS= read -r artifact < "$source/artifact-manifest.txt"
             case "$artifact" in

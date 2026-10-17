@@ -10,15 +10,11 @@ import hashlib
 
 Import("env")
 
-# Clone the environment to avoid polluting the main environment with Rive-specific flags
 rive_env = env.Clone()
 
-# rive-runtime is in a subdirectory of the current directory (third-party)
 rive_dir = os.path.join(Dir(".").abspath, "rive-runtime")
 deps_dir = os.path.join(rive_dir, "dependencies")
 
-# Keep the recorder compatible with Rive revisions that expose
-# Renderer::modulateOpacity(), without relying on a global Git safe-directory.
 renderer_header = os.path.join(rive_dir, "include", "rive", "renderer.hpp")
 try:
     with open(renderer_header, "r", encoding="utf-8") as header:
@@ -27,8 +23,6 @@ try:
 except OSError as exc:
     raise RuntimeError(f"Could not inspect Rive renderer API: {renderer_header}") from exc
 
-# --- Install Dependencies (HarfBuzz & SheenBidi) ---
-# Version the upgraded dependency caches so older local builds remain recoverable.
 harfbuzz_dir = os.path.join(deps_dir, "harfbuzz-08d34675f64b")
 sheenbidi_dir = os.path.join(deps_dir, "sheenbidi")
 yoga_dir = os.path.join(deps_dir, "yoga-dd288d29db01")
@@ -37,6 +31,15 @@ libpng_dir = os.path.join(deps_dir, "libpng-1f1a50134680")
 zlib_dir = os.path.join(deps_dir, "zlib")
 libjpeg_dir = os.path.join(deps_dir, "libjpeg")
 libwebp_dir = os.path.join(deps_dir, "libwebp")
+
+rive_scripting_arg = str(ARGUMENTS.get("rive_scripting", "no")).lower()
+if rive_scripting_arg not in ("yes", "no", "true", "false", "1", "0"):
+    raise RuntimeError("rive_scripting must be yes or no")
+rive_scripting = rive_scripting_arg in ("yes", "true", "1")
+script_workspace_tag = hashlib.sha256(os.path.normcase(Dir("#").abspath).encode("utf-8")).hexdigest()[:12]
+script_deps_dir = os.path.join(tempfile.gettempdir(), "rivegd-scripting-dependencies", script_workspace_tag)
+luau_dir = os.path.join(script_deps_dir, "luau-c1c57894ff8f-verified-v2")
+hydrogen_dir = os.path.join(script_deps_dir, "libhydrogen-4c298c5e3012-verified-v2")
 
 def install_dependency(name, url, sha256, target_dir, retries=4):
     source_marker = os.path.join(target_dir, ".rivegd-source.sha256")
@@ -50,8 +53,6 @@ def install_dependency(name, url, sha256, target_dir, retries=4):
                 f"Existing {name} dependency marker does not match the pinned archive. "
                 f"Move {target_dir} aside and rebuild."
             )
-        # Preserve dependencies created by older revisions. They cannot be
-        # authenticated retroactively, so do not invent a marker for them.
         print(
             f"RIVE: WARNING: Using unverified legacy {name} dependency at {target_dir}. "
             "Move it aside and rebuild to install the pinned, verified archive."
@@ -91,8 +92,6 @@ def install_dependency(name, url, sha256, target_dir, retries=4):
                 raise ValueError(
                     f"SHA-256 mismatch for {name}: expected {sha256}, got {actual_sha256}"
                 )
-            # Keep extraction on the target volume so os.rename remains atomic
-            # when Windows TEMP and the checkout are on different drives.
             with tempfile.TemporaryDirectory(prefix="rivegd-dependency-", dir=target_parent) as extract_dir:
                 with zipfile.ZipFile(io.BytesIO(data)) as archive:
                     root = safe_extract(archive, extract_dir)
@@ -121,90 +120,78 @@ install_dependency("ZLib", "https://codeload.github.com/madler/zlib/zip/51b7f2ab
 install_dependency("LibJPEG", "https://codeload.github.com/rive-app/libjpeg/zip/2f995b502f6ea31cb130d93b5661bf468c114e19", "782a72878da3ecfce4619d72f15d1b60d8c38303f0a4bea4cf1391b202236369", libjpeg_dir)
 install_dependency("LibWebP", "https://codeload.github.com/webmproject/libwebp/zip/845d5476a866141ba35ac133f856fa62f0b7445f", "1745e44c510c4f4119f154dc3f09c10c3e272b28225b8af32988ff224f3e492e", libwebp_dir)
 
-# --- Preprocess Generated Shaders (Fix C2026) ---
+if rive_scripting:
+    install_dependency("Luau VM", "https://codeload.github.com/luigi-rosso/luau/zip/c1c57894ff8f4fdacf171179eddd04c27cc5f7da", "d1f2fd3e3739645d587fceb55bc9bfba80f8bc8042fea64f59eae2af35d4e5a7", luau_dir)
+    install_dependency("LibHydrogen", "https://codeload.github.com/luigi-rosso/libhydrogen/zip/4c298c5e3012d891b8b375c6dd215f580a36ed60", "b02dcfe402f1cf76fe004ec8826d7c4367c4c674f2a64b94fc210b0e8e9dd866", hydrogen_dir)
+
+# MSVC rejects long raw string literals (C2026); emit null-terminated byte arrays.
 def preprocess_generated_shaders(env, rive_dir):
-    # Target directory containing the problematic headers
     generated_shaders_dir = os.path.join(rive_dir, "renderer", "include", "generated", "shaders")
     if not os.path.exists(generated_shaders_dir):
         return
 
-    # Create a temporary directory for the modified headers
-    # We use a consistent path in temp to avoid clutter, but ensure it's fresh
-    temp_base = os.path.join(tempfile.gettempdir(), "rivegd_shader_fix")
-    if os.path.exists(temp_base):
-        try:
-            shutil.rmtree(temp_base)
-        except OSError:
-            pass # Might be in use, but we try our best
+    shader_inputs = []
+    for root, dirs, files in os.walk(generated_shaders_dir):
+        dirs.sort()
+        for filename in sorted(files):
+            if filename.endswith((".h", ".hpp", ".glsl")):
+                shader_inputs.append(os.path.join(root, filename))
+    signature = hashlib.sha256((os.path.normcase(os.path.realpath(rive_dir)) + str(env["platform"]) + "hex-array-v2").encode("utf-8"))
+    for source in shader_inputs:
+        signature.update(os.path.relpath(source, generated_shaders_dir).encode("utf-8"))
+        with open(source, "rb") as shader_file:
+            signature.update(shader_file.read())
+    temp_base = os.path.join(tempfile.gettempdir(), "rivegd-shader-cache", signature.hexdigest()[:24])
     
-    # We need to preserve the include structure: generated/shaders/...
-    # So if we add temp_base to CPPPATH, we need the files to be in temp_base/generated/shaders
     target_dir = os.path.join(temp_base, "generated", "shaders")
     
-    # print(f"RIVE: Pre-processing generated shaders to {target_dir} to fix C2026...")
-    
     def convert_raw_string_to_hex_array(content):
-        # Regex to match: const char name[] = R"delimiter(content)delimiter";
-        # We capture the name, the delimiter, and the content.
-        # We use re.DOTALL so . matches newlines.
         pattern = r'(?:static\s+)?const\s+char\s+(\w+)\[\]\s*=\s*R"([^"(]*)\((.*?)\)\2";'
         
         def replacer(match):
-            name = match.group(1)
-            body = match.group(3)
-            
-            # Convert string to bytes (UTF-8)
-            bytes_data = body.encode('utf-8')
-            
-            # Convert to hex strings
-            hex_values = [f"0x{b:02x}" for b in bytes_data]
-            hex_values.append("0x00") # Null terminator
-            
-            # Format with line breaks to be readable/safe
+            array_name = match.group(1)
+            shader_bytes = match.group(3).encode('utf-8') + b'\0'
+            hex_values = [f"0x{byte:02x}" for byte in shader_bytes]
             lines = []
-            chunk_size = 16 # 16 bytes per line
-            for i in range(0, len(hex_values), chunk_size):
-                lines.append(", ".join(hex_values[i:i+chunk_size]))
+            bytes_per_line = 16
+            for offset in range(0, len(hex_values), bytes_per_line):
+                lines.append(", ".join(hex_values[offset:offset + bytes_per_line]))
             
             array_body = ",\n".join(lines)
             
-            # Reconstruct as char array initialization
-            return f"const char {name}[] = {{\n{array_body}\n}};"
+            return f"const char {array_name}[] = {{\n{array_body}\n}};"
 
         return re.sub(pattern, replacer, content, flags=re.DOTALL)
 
     for root, dirs, files in os.walk(generated_shaders_dir):
         rel_path = os.path.relpath(root, generated_shaders_dir)
         dest_root = os.path.join(target_dir, rel_path)
-        if not os.path.exists(dest_root):
-            os.makedirs(dest_root)
+        os.makedirs(dest_root, exist_ok=True)
             
         for f in files:
             if f.endswith(".h") or f.endswith(".hpp") or f.endswith(".glsl"):
                 src_file = os.path.join(root, f)
                 dst_file = os.path.join(dest_root, f)
+                if os.path.isfile(dst_file):
+                    continue
                 
                 try:
                     with open(src_file, 'r', encoding='utf-8', errors='ignore') as fin:
                         content = fin.read()
                     
-                    # Apply the conversion
                     new_content = convert_raw_string_to_hex_array(content)
                     
-                    # If no change (no raw string found), we still write it out 
-                    # because we need the file to exist in the include path override.
-                    
-                    with open(dst_file, 'w', encoding='utf-8') as fout:
+                    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', newline='\n', dir=dest_root, delete=False) as fout:
                         fout.write(new_content)
+                        temporary_header = fout.name
+                    os.replace(temporary_header, dst_file)
                 except Exception as e:
-                    print(f"Warning: Failed to process {src_file}: {e}")
+                    raise RuntimeError(f"Failed to process shader header {src_file}: {e}") from e
 
-    # Prepend the temp directory to include paths so modified files are found first
     env.Prepend(CPPPATH=[temp_base])
 
 preprocess_generated_shaders(rive_env, rive_dir)
 
-# --- Generate pnglibconf.h ---
 png_config_dir = os.path.join(libpng_dir, "rivegd-config")
 pnglibconf_h = os.path.join(png_config_dir, "pnglibconf.h")
 if not os.path.exists(pnglibconf_h):
@@ -221,7 +208,7 @@ rive_env.Append(CPPPATH=[
     os.path.join(rive_dir, "renderer", "glad", "include"),
     os.path.join(rive_dir, "renderer", "glad"),
     os.path.join(harfbuzz_dir, "src"),
-    deps_dir, # For rive_harfbuzz_renames.h
+    deps_dir,
     os.path.join(sheenbidi_dir, "Headers"),
     yoga_dir,
     miniaudio_dir,
@@ -235,29 +222,48 @@ rive_env.Append(CPPPATH=[
 ])
 
 rive_env.Append(CPPDEFINES=[
-    '_RIVE_INTERNAL_', 'WITH_RIVE_TEXT', 'WITH_RIVE_TOOLS',
+    '_RIVE_INTERNAL_', 'WITH_RIVE_TEXT',
     'WITH_RIVE_LAYOUT', 'YOGA_EXPORT=',
     'WITH_RIVE_AUDIO', 'MA_NO_RESOURCE_MANAGER',
     'RIVE_PNG', 'RIVE_JPEG', 'RIVE_WEBP', 'RIVE_DECODERS',
     'SB_CONFIG_UNITY'
 ])
-# Desktop GL is not available on Android; Vulkan is used there instead.
+# WITH_RIVE_TOOLS changes the ABI and permits unsigned scripts.
+def define_name(definition):
+    return definition[0] if isinstance(definition, (tuple, list)) else str(definition).split("=", 1)[0]
+rive_env["CPPDEFINES"] = [definition for definition in rive_env.get("CPPDEFINES", []) if define_name(definition) != "WITH_RIVE_TOOLS"]
+if rive_scripting:
+    if any(define_name(definition) == "WITH_RIVE_TEST_SIGNATURE" for definition in rive_env.get("CPPDEFINES", [])):
+        raise RuntimeError("RiveGD scripting accepts production signatures only; WITH_RIVE_TEST_SIGNATURE is forbidden")
+    rive_env["CPPDEFINES"] = [definition for definition in rive_env.get("CPPDEFINES", []) if define_name(definition) != "WITH_RIVE_TOOLS"]
+    rive_env.Append(CPPDEFINES=[
+        "WITH_RIVE_SCRIPTING", "WITH_RIVE_SCRIPTING_LUAU",
+        "RIVE_LUAU", "LUA_USE_LONGJMP", "HYDRO_SIGN_VERIFY_ONLY=1",
+        "RIVE_GODOT_SCRIPT_VERIFICATION_PRODUCTION",
+    ])
+    rive_env.Append(CPPPATH=[
+        os.path.join(rive_dir, "scripting"),
+        os.path.join(luau_dir, "VM", "include"),
+        os.path.join(luau_dir, "Common", "include"),
+        hydrogen_dir,
+    ])
+    rive_env.Append(CCFLAGS=["/FIrive_luau.hpp"] if rive_env["platform"] == "windows" else ["-include", "rive_luau.hpp"])
+rive_audio_backend = ARGUMENTS.get("rive_audio_backend", "native")
+if rive_audio_backend not in ("native", "godot"):
+    raise RuntimeError("rive_audio_backend must be native or godot")
+if rive_audio_backend == "godot":
+    rive_env.Append(CPPDEFINES=["EXTERNAL_RIVE_AUDIO_ENGINE"])
 if rive_env["platform"] != "android":
     rive_env.Append(CPPDEFINES=['RIVE_DESKTOP_GL'])
 else:
-    # Required to activate GLES3 headers in gles3.hpp (and related renderer files).
     rive_env.Append(CPPDEFINES=['RIVE_ANDROID'])
 
-# Suppress warnings for third-party dependencies
 if rive_env["platform"] != "windows":
     rive_env.Append(CCFLAGS=['-Wno-unused-function', '-Wno-error=unused-function', '-Wno-macro-redefined'])
 
-# Force include unistd.h for zlib on macOS/Android to fix implicit function declaration errors
-# (lseek and friends are POSIX; C99/C11 strict mode requires explicit inclusion of <unistd.h>)
 if rive_env["platform"] in ["macos", "android"]:
     rive_env.Append(CCFLAGS=['-include', 'unistd.h'])
 
-# Force include rive_harfbuzz_renames.h
 if rive_env["platform"] == "windows":
     rive_env.Append(CCFLAGS=['/FIrive_harfbuzz_renames.h'])
     rive_env.Append(CCFLAGS=['/FIrive_yoga_renames.h'])
@@ -269,7 +275,6 @@ else:
     rive_env.Append(CCFLAGS=['-include', 'rive_libjpeg_renames.h'])
     rive_env.Append(CCFLAGS=['-include', 'rive_png_renames.h'])
 
-# Platform specific flags
 if rive_env["platform"] == "macos":
     rive_env.Append(CCFLAGS=["-fobjc-arc"])
     rive_env.Append(FRAMEWORKS=["Metal", "Foundation", "QuartzCore", "AppKit", "CoreGraphics", "CoreText", "AudioToolbox"])
@@ -280,21 +285,15 @@ elif rive_env["platform"] in ["windows", "linux", "android"]:
         "VK_NO_PROTOTYPES", "VMA_STATIC_VULKAN_FUNCTIONS=0",
         "VMA_DYNAMIC_VULKAN_FUNCTIONS=1",
     ])
-    # Match upstream: atomic shaders are enabled on desktop, opt-in on Android.
     if rive_env["platform"] != "android":
         rive_env.Append(CPPDEFINES=["WITH_VULKAN_ATOMICS"])
 
-    # Pick up VULKAN_SDK headers on Windows + Linux (LunarG ships modern Vulkan headers
-    # the system packages may be too old for, e.g. VK_ARM_format_pack added in 1.4.318).
     vulkan_sdk = os.environ.get("VULKAN_SDK")
     if vulkan_sdk and rive_env["platform"] in ["windows", "linux", "android"]:
-        # LunarG SDK uses 'Include' on Windows, 'include' on Linux.
         for inc_name in ("Include", "include"):
             inc_dir = os.path.join(vulkan_sdk, inc_name)
             if os.path.isdir(inc_dir):
                 if rive_env["platform"] == "android":
-                    # Use -isystem so Clang treats these as system headers and suppresses
-                    # third-party warnings (e.g. VMA's -Wnullability-completeness).
                     rive_env.Append(CCFLAGS=[
                         "-isystem", inc_dir,
                         "-isystem", os.path.join(inc_dir, "vma"),
@@ -309,18 +308,14 @@ elif rive_env["platform"] in ["windows", "linux", "android"]:
                 break
 
     if rive_env["platform"] == "linux":
-        # RiveGD loads Vulkan and OpenGL entry points at runtime with dlopen.
         rive_env.Append(LIBS=["dl"])
 
     if rive_env["platform"] == "windows":
-        # D3D12 configuration (Windows only)
         rive_env.Append(CPPDEFINES=["RIVE_D3D12", "D3D12_ENABLED", "RIVE_GODOT_D3D12_EXTERNAL_STATE", "_USE_MATH_DEFINES", "NOMINMAX"])
         rive_env.Append(CXXFLAGS=["/std:c++20", "/bigobj"])
         
-        # Link system libraries
         rive_env.Append(LIBS=["d3d12", "dxgi", "d3dcompiler", "opengl32", "dxguid", "uuid"])
 
-        # Prioritize Godot build deps for D3DX12
         local_app_data = os.environ.get("LOCALAPPDATA")
         if local_app_data:
             godot_d3d_deps = os.path.join(local_app_data, "Godot", "build_deps", "agility_sdk", "build", "native", "include", "d3dx12")
@@ -328,7 +323,6 @@ elif rive_env["platform"] in ["windows", "linux", "android"]:
                 print(f"RIVE: Using Godot D3D deps from {godot_d3d_deps}")
                 rive_env.Append(CPPPATH=[godot_d3d_deps])
 
-        # Add support for external DirectX Headers via env var
         dx_headers = os.environ.get("DIRECTX_HEADERS_PATH")
         if dx_headers:
             print(f"RIVE: Using DirectX Headers from {dx_headers}")
@@ -339,13 +333,11 @@ elif rive_env["platform"] in ["windows", "linux", "android"]:
                 os.path.join(dx_headers, "include", "dxguids")
             ])
         
-        # Add support for D3D12MA via env var
         d3d12ma_path = os.environ.get("D3D12MA_PATH")
         if d3d12ma_path:
             print(f"RIVE: Using D3D12MA from {d3d12ma_path}")
             rive_env.Append(CPPPATH=[d3d12ma_path])
 
-# Collect Rive sources
 rive_sources = []
 dirs_to_scan = [
     os.path.join(rive_dir, 'src'),
@@ -356,7 +348,6 @@ exclude_dir_names = {'d3d', 'd3d11', 'd3d12', 'vulkan', 'webgpu', 'dawn', 'andro
 if rive_env["platform"] != "macos":
     exclude_dir_names.add('metal')
 else:
-    # macOS: explicitly exclude all D3D directories
     exclude_dir_names.update({'d3d', 'd3d11', 'd3d12'})
 
 if rive_env["platform"] in ["windows", "linux", "android"]:
@@ -372,12 +363,9 @@ for d in dirs_to_scan:
         dirs[:] = [x for x in dirs if x not in exclude_dir_names]
         for f in files:
             if f.endswith('.cpp') or (f.endswith('.mm') and rive_env["platform"] == "macos"):
-                # Exclude EGL dependent file on non-Android platforms
                 if f == "load_gles_extensions.cpp" and rive_env["platform"] != "android":
                     continue
                 
-                # Upstream also uses this implementation for desktop ANGLE.
-                # Android lacks the desktop GLAD entry points for that path.
                 if f == "pls_impl_webgl.cpp" and rive_env["platform"] == "android":
                     continue
                 
@@ -386,8 +374,6 @@ for d in dirs_to_scan:
 
 
 
-# On macOS exclude D3D12 renderer source(s) that live in the project `src/` directory.
-# This prevents compilation of files that include DirectX headers on macOS.
 if rive_env["platform"] == "macos":
     def _basename(node):
         try:
@@ -405,15 +391,11 @@ if rive_env["platform"] == "macos":
         filtered_sources.append(s)
     rive_sources = filtered_sources
 
-# Glad GL loader is only needed on desktop (Windows/Linux/macOS).
-# Android uses the NDK's system GLES3 headers directly, loaded via eglGetProcAddress.
 if rive_env["platform"] != "android":
     rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "glad_custom.c"))
     rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "src", "gles2.c"))
     rive_sources.append(os.path.join(rive_dir, "renderer", "glad", "src", "egl.c"))
 
-# Follow the source lists from this pinned Rive revision rather than compiling
-# dependency aggregators, tests, and removed HarfBuzz subset/graph implementations.
 def dependency_build_config(name):
     path = os.path.join(deps_dir, f"premake5_{name}_v2.lua")
     with open(path, "r", encoding="utf-8") as config:
@@ -452,16 +434,27 @@ if rive_env["platform"] == "macos":
 rive_sources.extend(dependency_sources("harfbuzz", harfbuzz_dir, "cc"))
 rive_sources.append(os.path.join(sheenbidi_dir, "Source", "SheenBidi.c"))
 
-# Add Yoga sources
 rive_sources.extend(dependency_sources("yoga", yoga_dir, "cpp"))
 
-# Add Miniaudio sources
+if rive_scripting:
+    luau_vm_sources = []
+    for root, dirs, files in os.walk(os.path.join(luau_dir, "VM", "src")):
+        for filename in sorted(files):
+            if filename.endswith(".cpp"):
+                luau_vm_sources.append(os.path.join(root, filename))
+    if not luau_vm_sources:
+        raise RuntimeError("The pinned Luau VM source list is empty")
+    hydrogen_source = os.path.join(hydrogen_dir, "libhydrogen.c")
+    if not os.path.isfile(hydrogen_source):
+        raise RuntimeError("Missing pinned libhydrogen.c")
+    rive_sources.extend(luau_vm_sources)
+    rive_sources.append(hydrogen_source)
+
 if rive_env["platform"] == "ios":
     rive_sources.append(os.path.join(miniaudio_dir, "miniaudio.m"))
 else:
     rive_sources.append(os.path.join(miniaudio_dir, "miniaudio.c"))
 
-# Add LibPNG sources
 libpng_sources = [
     "png.c", "pngerror.c", "pngget.c", "pngmem.c", "pngpread.c", "pngread.c",
     "pngrio.c", "pngrtran.c", "pngrutil.c", "pngset.c", "pngtrans.c", "pngwio.c",
@@ -471,7 +464,6 @@ libpng_sources = [
 for s in libpng_sources:
     rive_sources.append(os.path.join(libpng_dir, s))
 
-# Add ZLib sources
 zlib_sources = [
     "adler32.c", "compress.c", "crc32.c", "deflate.c", "gzclose.c", "gzlib.c",
     "gzread.c", "gzwrite.c", "infback.c", "inffast.c", "inftrees.c", "trees.c",
@@ -480,7 +472,6 @@ zlib_sources = [
 for s in zlib_sources:
     rive_sources.append(os.path.join(zlib_dir, s))
 
-# Add LibJPEG sources
 libjpeg_sources = [
     "jaricom.c", "jcapimin.c", "jcapistd.c", "jcarith.c", "jccoefct.c", "jccolor.c",
     "jcdctmgr.c", "jchuff.c", "jcinit.c", "jcmainct.c", "jcmarker.c", "jcmaster.c",
@@ -494,7 +485,6 @@ libjpeg_sources = [
 for s in libjpeg_sources:
     rive_sources.append(os.path.join(libjpeg_dir, s))
 
-# Add LibWebP sources
 libwebp_sources = [
     "src/dsp/alpha_processing.c", "src/dsp/cpu.c", "src/dsp/dec.c", "src/dsp/dec_clip_tables.c",
     "src/dsp/filters.c", "src/dsp/lossless.c", "src/dsp/rescaler.c", "src/dsp/upsampling.c",
@@ -532,7 +522,6 @@ libwebp_sources = [
 for s in libwebp_sources:
     rive_sources.append(os.path.join(libwebp_dir, s))
 
-# Add Rive Decoders sources
 rive_decoders_dir = os.path.join(rive_dir, "decoders", "src")
 rive_decoders_sources = [
     "bitmap_decoder.cpp",
@@ -544,8 +533,6 @@ rive_decoders_sources = [
 for s in rive_decoders_sources:
     rive_sources.append(os.path.join(rive_decoders_dir, s))
 
-# Build the library
-# We use StaticLibrary because we will link it into the final shared library
 rive_lib = rive_env.StaticLibrary("rive_runtime", rive_sources)
 
 Return("rive_lib", "rive_env")

@@ -1,0 +1,151 @@
+diff --git a/include/rive/text/raw_text_input.hpp b/include/rive/text/raw_text_input.hpp
+--- a/include/rive/text/raw_text_input.hpp
++++ b/include/rive/text/raw_text_input.hpp
+@@ -150,6 +150,11 @@ public:
+     std::string selectedText() const;
+     void text(std::string value);
+     void textPreserveCursor(std::string value);
++    void composition(const std::string& value, uint32_t start, uint32_t length);
++    void cancelComposition();
++    bool isComposing() const { return m_composing; }
++    std::string committedText() const;
++    Cursor committedCursor() const { return m_composing ? m_compositionCursor : m_cursor; }
+     // Length of the input text.
+     size_t length() const;
+
+@@ -204,6 +209,9 @@ private:
+     void flag(Flags mask);
+
+     Cursor m_cursor;
++    bool m_composing = false;
++    Cursor m_compositionCursor = Cursor::zero();
++    std::vector<Unichar> m_compositionOriginal;
+     TextRun m_textRun;
+     ShapePaintPath m_textPath;
+     ShapePaintPath m_selectedTextPath;
+diff --git a/src/text/raw_text_input.cpp b/src/text/raw_text_input.cpp
+--- a/src/text/raw_text_input.cpp
++++ b/src/text/raw_text_input.cpp
+@@ -114,6 +114,7 @@ void RawTextInput::erase()
+
+ void RawTextInput::insert(Unichar codePoint)
+ {
++    cancelComposition();
+     Cursor startingCursor = m_cursor;
+     erase();
+
+@@ -130,6 +131,7 @@ void RawTextInput::insert(Unichar codePoint)
+
+ void RawTextInput::insert(const std::string& text)
+ {
++    cancelComposition();
+     Cursor startingCursor = m_cursor;
+     erase();
+
+@@ -934,6 +936,7 @@ void RawTextInput::setTextPrivate(std::string value)
+
+ void RawTextInput::text(std::string value)
+ {
++    cancelComposition();
+     Cursor startingCursor = m_cursor;
+     setTextPrivate(value);
+     auto position = CursorPosition::zero();
+@@ -944,6 +947,7 @@ void RawTextInput::text(std::string value)
+
+ void RawTextInput::textPreserveCursor(std::string value)
+ {
++    cancelComposition();
+     Cursor startingCursor = m_cursor;
+     m_idealCursorX = -1.0f;
+     setTextPrivate(value);
+@@ -957,6 +961,55 @@ void RawTextInput::textPreserveCursor(std::string value)
+     captureJournalEntry(startingCursor);
+ }
+
++void RawTextInput::composition(const std::string& value,
++                               uint32_t start,
++                               uint32_t length)
++{
++    if (value.empty())
++    {
++        cancelComposition();
++        return;
++    }
++    if (!m_composing)
++    {
++        m_compositionOriginal = m_text;
++        m_compositionCursor = m_cursor;
++        m_composing = true;
++    }
++    std::vector<Unichar> preview;
++    const uint8_t* ptr = reinterpret_cast<const uint8_t*>(value.c_str());
++    while (*ptr) preview.push_back(UTF::NextUTF8(&ptr));
++    m_text = m_compositionOriginal;
++    if (m_text.empty()) m_text.push_back(zeroWidthSpace);
++    const size_t limit = m_text.size() - 1;
++    const size_t first = std::min(size_t(m_compositionCursor.first().codePointIndex()), limit);
++    const size_t last = std::min(size_t(m_compositionCursor.last().codePointIndex()), limit);
++    m_text.erase(m_text.begin() + first, m_text.begin() + last);
++    m_text.insert(m_text.begin() + first, preview.begin(), preview.end());
++    const size_t anchor = std::min(size_t(start), preview.size());
++    const size_t extent = anchor + std::min(size_t(length), preview.size() - anchor);
++    m_cursor = Cursor(CursorPosition(uint32_t(first + anchor)), CursorPosition(uint32_t(first + extent)));
++    m_idealCursorX = -1.0f;
++    flag(Flags::shapeDirty | Flags::measureDirty | Flags::selectionDirty);
++}
++
++void RawTextInput::cancelComposition()
++{
++    if (!m_composing) return;
++    m_text = std::move(m_compositionOriginal);
++    m_cursor = m_compositionCursor;
++    m_composing = false;
++    m_idealCursorX = -1.0f;
++    flag(Flags::shapeDirty | Flags::measureDirty | Flags::selectionDirty);
++}
++
++std::string RawTextInput::committedText() const
++{
++    if (!m_composing) return text();
++    return m_compositionOriginal.size() <= 1 ? std::string() :
++        encodeCodePoints(Span<const Unichar>(m_compositionOriginal.data(), m_compositionOriginal.size() - 1));
++}
++
+ size_t RawTextInput::length() const
+ {
+     if (empty())
+diff --git a/src/text/text_input.cpp b/src/text/text_input.cpp
+--- a/src/text/text_input.cpp
++++ b/src/text/text_input.cpp
+@@ -453,7 +453,7 @@ static KeyModifiers systemModifier()
+ {
+ #if defined(__EMSCRIPTEN__)
+     return isWindowsBrowser() ? KeyModifiers::ctrl : KeyModifiers::meta;
+-#elif defined(RIVE_WINDOWS)
++#elif defined(RIVE_WINDOWS) || defined(_WIN32) || defined(__linux__) || defined(__ANDROID__)
+     return KeyModifiers::ctrl;
+ #else
+     return KeyModifiers::meta;
+@@ -508,6 +508,7 @@ bool TextInput::keyInput(Key value,
+                          bool isRepeat)
+ {
+ #ifdef WITH_RIVE_TEXT
++    if (m_rawTextInput.isComposing()) return true;
+     if (isPressed)
+     {
+         switch (value)
+@@ -665,6 +666,7 @@ void TextInput::blurred()
+ {
+     m_focused = false;
+ #ifdef WITH_RIVE_TEXT
++    m_rawTextInput.cancelComposition();
+     m_rawTextInput.clearSelection();
+ #endif
+     markPaintDirty();
+@@ -824,5 +826,6 @@ bool TextInput::worldToLocalWithViewport(Vec2D worldPosition,
+ void TextInput::startDrag(Vec2D worldPosition)
+ {
+ #ifdef WITH_RIVE_TEXT
++    m_rawTextInput.cancelComposition();
+     m_isDragging = true;
+     m_lastDragWorldPosition = worldPosition;

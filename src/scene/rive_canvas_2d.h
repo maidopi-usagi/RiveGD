@@ -8,6 +8,7 @@
 #include "../renderer/rive_render_registry.h"
 #include "../renderer/rive_texture_target.h"
 #include "rive_node.h"
+#include "../resources/rive_output_texture.h"
 #include <rive/renderer.hpp>
 
 using namespace godot;
@@ -17,23 +18,20 @@ class RiveCanvas2D : public Node2D, public RiveDrawable {
 
 private:
     Ref<RiveTextureTarget> texture_target;
+    Ref<RiveOutputTexture> output_texture;
+    bool render_dirty = true;
     Vector2i size = Vector2i(512, 512);
-    Rect2 cull_rect = Rect2(0, 0, 0, 0); // empty = use (0,0,size,size)
+    Rect2 cull_rect = Rect2(0, 0, 0, 0);
     bool cull_enabled = true;
 
-    // Resolve descendants by ObjectID at every use. Script callbacks can free
-    // their own node or a later sibling while a custom draw is in progress.
     LocalVector<ObjectID> active_nodes;
-    // Per active node, the cumulative xform from this canvas down to (but
-    // excluding) the node itself — i.e. canvas->parent_of_node. Same length
-    // and order as active_nodes.
     LocalVector<Transform2D> active_parent_xforms;
+    LocalVector<Transform2D> last_node_xforms;
+    LocalVector<ObjectID> last_nodes;
+    LocalVector<bool> last_visibility;
     double current_delta = 0.0;
 
     void _advance_node(uint32_t p_index);
-    // Recursively collect RiveNode descendants, stopping at nested
-    // RiveCanvas2D (which manages its own subtree). Pushes the parent's
-    // cumulative transform (relative to this canvas) for each collected node.
     void _collect_descendants(Node *parent, const Transform2D &parent_xform_in_canvas);
     RiveNode *_resolve_active_node(uint32_t p_index) const;
 
@@ -54,11 +52,13 @@ public:
     bool is_cull_enabled() const;
 
     Ref<Texture2D> get_texture() const;
+    Ref<Image> read_image() const;
 
     void draw(rive::Renderer *renderer) override;
     
     void _process(double delta) override;
     void _draw() override;
+    PackedStringArray _get_configuration_warnings() const override;
 };
 
-#endif // RIVE_CANVAS_2D_H
+#endif

@@ -9,6 +9,10 @@
 #include "rive_svg.h"
 #include "resources/rive_file.h"
 #include "resources/rive_types.h"
+#include "resources/rive_output_texture.h"
+#include "resources/rive_audio_stream.h"
+#include "resources/rive_view_model_preset.h"
+#include "resources/rive_artboard_reference.h"
 #include "scene/rive_node.h"
 #include "scene/rive_file_instance.h"
 #include "scene/rive_multi_instance.h"
@@ -17,8 +21,10 @@
 #include "scene/rive_raw.h"
 #include "scene/rive_player.h"
 #include "scene/rive_view_model.h"
+#include "scene/rive_binding.h"
 #include "renderer/rive_texture_target.h"
 #include "editor/rive_editor_plugin.h"
+#include "editor/rive_export_plugin.h"
 #include "editor/rive_view_model_inspector.h"
 #include "editor/rive_file_instance_editor_plugin.h"
 #include <godot_cpp/classes/editor_plugin_registration.hpp>
@@ -32,6 +38,7 @@ void initialize_rive_module(ModuleInitializationLevel p_level) {
         ClassDB::register_class<RivePaint>();
         ClassDB::register_class<RiveGradient>();
         ClassDB::register_class<RiveImage>();
+        ClassDB::register_class<RiveMesh>();
         ClassDB::register_class<RiveRendererWrapper>();
         ClassDB::register_class<RiveFont>();
         ClassDB::register_class<RiveText>();
@@ -46,6 +53,9 @@ void initialize_rive_module(ModuleInitializationLevel p_level) {
         
         ClassDB::register_class<RivePlayer>();
         ClassDB::register_class<RiveTextureTarget>();
+        ClassDB::register_class<RiveOutputTexture>();
+        ClassDB::register_class<RiveAudioStreamPlayback>();
+        ClassDB::register_class<RiveAudioStream>();
         
         ClassDB::register_abstract_class<RiveViewModelProperty>();
         ClassDB::register_class<RiveViewModelNumber>();
@@ -55,15 +65,24 @@ void initialize_rive_module(ModuleInitializationLevel p_level) {
         ClassDB::register_class<RiveViewModelEnum>();
         ClassDB::register_class<RiveViewModelTrigger>();
         ClassDB::register_class<RiveViewModelImage>();
+        ClassDB::register_class<RiveViewModelFont>();
+        ClassDB::register_class<RiveViewModelArtboard>();
+        ClassDB::register_class<RiveViewModelList>();
+        ClassDB::register_class<RiveViewModelBlob>();
+        ClassDB::register_class<RiveViewModelListIndex>();
         ClassDB::register_class<RiveViewModelInstance>();
+        ClassDB::register_class<RiveViewModelPreset>();
+        ClassDB::register_class<RiveArtboardReference>();
+        ClassDB::register_class<RiveBinding>();
 
-        // Initialize renderer
     }
     
     if (p_level == MODULE_INITIALIZATION_LEVEL_EDITOR) {
         ClassDB::register_class<RiveImportPlugin>();
+        ClassDB::register_class<RiveExportPlugin>();
         ClassDB::register_class<RiveViewModelInspector>();
         ClassDB::register_class<RiveInspectorPlugin>();
+        ClassDB::register_class<RiveResourceEditorProperty>();
         ClassDB::register_class<RiveEditorPlugin>();
         ClassDB::register_class<RiveFileInstanceEditor>();
         ClassDB::register_class<RiveFileInstanceEditorPlugin>();
@@ -78,6 +97,7 @@ void initialize_rive() {
 
 void uninitialize_rive_module(ModuleInitializationLevel p_level) {
     if (p_level == MODULE_INITIALIZATION_LEVEL_SCENE) {
+        RiveFont::clear_fallback_fonts();
         rive_integration::cleanup_rive_renderer();
     }
 }

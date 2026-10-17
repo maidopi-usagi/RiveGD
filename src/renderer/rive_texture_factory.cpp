@@ -11,8 +11,6 @@ namespace rive_integration {
 rive::rcp<rive::RenderImage> RiveTextureFactory::make_image(Ref<Texture2D> texture) {
     if (texture.is_null()) return nullptr;
 
-    // Read back through Godot on the caller thread. Only the backend factory
-    // decode below needs the Rive render-thread serialization boundary.
     Ref<Image> img = texture->get_image();
     if (img.is_null()) return nullptr;
 

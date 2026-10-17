@@ -1,9 +1,5 @@
 extends SceneTree
 
-# Run with a real rendering driver, for example:
-# godot --path project --rendering-method mobile --rendering-driver vulkan \
-#   --render-thread separate --script ../scripts/smoke_test.gd
-
 var canvas: RiveCanvas2D
 var control: RiveControl
 var path: RivePath
@@ -21,7 +17,6 @@ func _check(condition: bool, message: String) -> void:
 		push_error(message)
 
 func _draw(renderer: RiveRendererWrapper) -> void:
-	# Decode inside the scene-thread drawing callback to exercise nested dispatch.
 	if image == null:
 		var pixels := Image.create(2, 2, false, Image.FORMAT_RGBA8)
 		pixels.fill(Color.GREEN)
@@ -55,7 +50,6 @@ func _run() -> void:
 	svg.data = '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="64"><path fill="#0000ff" d="M0 0H128V64H0Z"/></svg>'.to_utf8_buffer()
 	control.rive_file = svg
 	_check(control.load_file() == OK, "SVG import failed")
-	# A changed resource reloads its existing instance without invalidating it.
 	svg.data = '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="64"><path fill="#00ffff" d="M0 0H128V64H0Z"/></svg>'.to_utf8_buffer()
 	_check(control.load_file() == OK, "SVG changed reload failed")
 
@@ -65,7 +59,7 @@ func _run() -> void:
 	_check(draw_count > 0, "RiveRaw did not draw")
 	var texture := canvas.get_texture()
 	if texture != null:
-		var result := texture.get_image()
+		var result := canvas.read_image()
 		_check(result != null and not result.is_empty(), "GPU readback failed")
 		if result != null and not result.is_empty():
 			var red := result.get_pixel(32, 32)
@@ -73,7 +67,6 @@ func _run() -> void:
 			_check(red.r > 0.8 and red.g < 0.2, "Recorded path did not render red")
 			_check(green.g > 0.8 and green.r < 0.2, "Recorded image mesh did not render green")
 	else:
-		# Compatibility rendering has no Texture2DRD; read the window viewport.
 		var result := root.get_texture().get_image()
 		_check(result != null and not result.is_empty(), "Viewport readback failed")
 		if result != null and not result.is_empty():

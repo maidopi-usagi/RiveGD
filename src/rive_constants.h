@@ -6,4 +6,4 @@ namespace RiveConstants {
     constexpr const char* EXTENSION = "*.riv";
 }
 
-#endif // RIVE_CONSTANTS_H
+#endif

@@ -48,7 +48,6 @@ PFN_vkGetInstanceProcAddr load_vulkan_loader() {
     g_vulkan_lib = dlopen("libvulkan.dylib", RTLD_NOW | RTLD_LOCAL);
     if (!g_vulkan_lib) g_vulkan_lib = dlopen("libvulkan.1.dylib", RTLD_NOW | RTLD_LOCAL);
 #elif defined(__ANDROID__)
-    // On Android the Vulkan loader is always libvulkan.so (no .1 suffix).
     g_vulkan_lib = dlopen("libvulkan.so", RTLD_NOW | RTLD_LOCAL);
 #else
     g_vulkan_lib = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_LOCAL);
@@ -267,7 +266,6 @@ bool create_vulkan_context(RenderingDevice* rd) {
         }
     }
 
-    // Publish only after every dependent resource was created successfully.
     g_rive_context = ctx.release();
     g_vk_state = state.release();
     RiveRenderRegistry::get_singleton()->set_factory(g_rive_context);
@@ -286,13 +284,11 @@ void render_texture_vulkan(RenderingDevice *rd, RID texture_rid, RiveDrawable *d
     VkDevice device = (VkDevice)rd->get_driver_resource(RenderingDevice::DRIVER_RESOURCE_LOGICAL_DEVICE, RID(), 0);
     if (!device) return;
 
-    // Cycle frames
     FrameResources& frame = g_vk_state->frames[g_vk_state->currentFrame];
     g_vk_state->currentFrame = (g_vk_state->currentFrame + 1) % g_vk_state->frames.size();
     VkCommandBuffer command_buffer = frame.commandBuffer;
     if (command_buffer == VK_NULL_HANDLE || frame.fence == VK_NULL_HANDLE) return;
 
-    // Wait for fence
     constexpr uint64_t kFenceTimeoutNs = 30ULL * 1000ULL * 1000ULL * 1000ULL;
     if (g_vk.vkWaitForFences(device, 1, &frame.fence, VK_TRUE, kFenceTimeoutNs) != VK_SUCCESS) {
         UtilityFunctions::printerr("Rive: Timed out or failed waiting for a Vulkan frame fence.");
@@ -351,9 +347,6 @@ void render_texture_vulkan(RenderingDevice *rd, RID texture_rid, RiveDrawable *d
 
             g_rive_context->flush(fr);
 
-            // Rive may leave the external target in a color-attachment or
-            // general layout. Restore the state Godot expects before the
-            // canvas samples this texture.
             rive::gpu::vkutil::ImageAccess sampled_access;
             sampled_access.layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
             sampled_access.accessMask = VK_ACCESS_SHADER_READ_BIT;
@@ -368,7 +361,6 @@ void render_texture_vulkan(RenderingDevice *rd, RID texture_rid, RiveDrawable *d
         return;
     }
 
-    // Do not reset the reusable fence until the command buffer is known-good.
     if (g_vk.vkResetFences(device, 1, &frame.fence) != VK_SUCCESS) return;
 
     VkSubmitInfo submit_info = {};
@@ -377,8 +369,6 @@ void render_texture_vulkan(RenderingDevice *rd, RID texture_rid, RiveDrawable *d
     submit_info.pCommandBuffers = &command_buffer;
 
     if (g_vk.vkQueueSubmit(g_vk_state->queue, 1, &submit_info, frame.fence) != VK_SUCCESS) {
-        // A failed submit can never signal the fence. Recreate it signaled so
-        // the next frame cannot block forever.
         g_vk.vkDestroyFence(device, frame.fence, nullptr);
         frame.fence = VK_NULL_HANDLE;
         VkFenceCreateInfo fence_info = {};
@@ -418,5 +408,5 @@ void cleanup_vulkan_context() {
     }
 }
 
-} // namespace rive_integration
+}
 #endif

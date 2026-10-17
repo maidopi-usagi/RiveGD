@@ -20,8 +20,6 @@ void RiveRaw::set_bounds(const Rect2 &p_bounds) {
 }
 
 void RiveRaw::draw(rive::Renderer* renderer) {
-    // A connected script can queue/free this node while the signal is being
-    // emitted. Keep the wrapper itself alive until the callback returns.
     Ref<RiveRendererWrapper> wrapper = renderer_wrapper;
     if (wrapper.is_valid()) {
         wrapper->set_renderer(renderer);
