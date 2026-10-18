@@ -430,7 +430,7 @@ if not harfbuzz_defines:
     raise RuntimeError("The pinned HarfBuzz compile definitions are empty")
 rive_env.Append(CPPDEFINES=harfbuzz_defines)
 if rive_env["platform"] == "macos":
-    rive_env.Append(CPPDEFINES=['HAVE_CORETEXT'])
+    rive_env.Append(CPPDEFINES=['HAVE_CORETEXT', 'HB_NO_PRAGMA_GCC_DIAGNOSTIC_ERROR'])
 
 rive_sources.extend(dependency_sources("harfbuzz", harfbuzz_dir, "cc"))
 rive_sources.append(os.path.join(sheenbidi_dir, "Source", "SheenBidi.c"))
