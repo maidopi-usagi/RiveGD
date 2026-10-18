@@ -267,8 +267,20 @@ jobs:
             third-party/rive-runtime/renderer/include/generated/shaders \
             "${{ matrix.config.shader_platform }}"
 
+      - name: Restore SCons cache
+        id: scons-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/rivegd-scons-cache
+          key: scons-v1-${{ matrix.config.name }}-${{ matrix.target }}-${{ github.sha }}
+          restore-keys: |
+            scons-v1-${{ matrix.config.name }}-${{ matrix.target }}-
+
       - name: Build
+        id: build
         shell: bash
+        env:
+          SCONS_CACHE: ${{ runner.temp }}/rivegd-scons-cache
         run: |
           set -euo pipefail
           jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
@@ -283,6 +295,13 @@ jobs:
             options+=("ndk_version=$RIVEGD_NDK_VERSION")
           fi
           scons "${options[@]}"
+
+      - name: Save SCons cache
+        if: ${{ !cancelled() && steps.build.outcome != 'skipped' && steps.scons-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/rivegd-scons-cache
+          key: ${{ steps.scons-cache.outputs.cache-primary-key }}
 
       - name: Stage and validate exact artifact
         shell: bash
@@ -471,6 +490,7 @@ jobs:
           set +e
           timeout 60s xvfb-run --auto-servernum "$GODOT_BIN" \
             --display-driver x11 \
+            --audio-driver Dummy \
             --editor \
             --path smoke-project \
             --quit-after 2 \
@@ -544,6 +564,7 @@ jobs:
           set +e
           timeout 120s xvfb-run --auto-servernum "$GODOT_BIN" \
             --display-driver x11 \
+            --audio-driver Dummy \
             --path smoke-project \
             --rendering-method mobile \
             --rendering-driver vulkan \
@@ -578,6 +599,7 @@ jobs:
           set +e
           timeout 120s xvfb-run --auto-servernum "$GODOT_BIN" \
             --display-driver x11 \
+            --audio-driver Dummy \
             --path smoke-project \
             --rendering-method mobile \
             --rendering-driver vulkan \
@@ -604,6 +626,7 @@ jobs:
           set +e
           timeout 120s xvfb-run --auto-servernum "$GODOT_BIN" \
             --display-driver x11 \
+            --audio-driver Dummy \
             --path smoke-project \
             --rendering-method mobile \
             --rendering-driver vulkan \
@@ -667,6 +690,7 @@ jobs:
             set +e
             timeout 120s xvfb-run --auto-servernum "$GODOT_BIN" \
               --display-driver x11 --path smoke-project \
+              --audio-driver Dummy \
               --rendering-method mobile --rendering-driver vulkan \
               --render-thread safe --resolution 1024x640 \
               --script "$GITHUB_WORKSPACE/scripts/${suite}_smoke_test.gd" > "$log" 2>&1

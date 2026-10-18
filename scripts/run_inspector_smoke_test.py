@@ -64,7 +64,8 @@ def main():
         )
         command = [
             args.godot, "--editor", "--path", str(project), "--rendering-method", method,
-            "--rendering-driver", args.driver, "--render-thread", "safe", "--resolution", "1024x768",
+            "--rendering-driver", args.driver, "--audio-driver", "Dummy",
+            "--render-thread", "safe", "--resolution", "1024x768",
         ]
         if args.display_driver:
             command.extend(["--display-driver", args.display_driver])
