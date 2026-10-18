@@ -48,7 +48,11 @@ bool is_persistent_override(const Variant &p_value, int p_depth = 0) {
     }
     if (p_value.get_type() == Variant::ARRAY) {
         const Array items = p_value;
-        return items.is_empty();
+        if (items.size() > 1000) return false;
+        for (int i = 0; i < items.size(); ++i) {
+            if (items[i].get_type() != Variant::OBJECT || Ref<RiveViewModelPreset>(items[i]).is_null()) return false;
+        }
+        return true;
     }
     if (p_value.get_type() == Variant::DICTIONARY) {
         const Dictionary values = p_value;
@@ -65,6 +69,30 @@ Variant copy_override_containers(const Variant &p_value) {
     if (p_value.get_type() == Variant::ARRAY) return Array(p_value).duplicate(true);
     if (p_value.get_type() == Variant::DICTIONARY) return Dictionary(p_value).duplicate(true);
     return p_value;
+}
+
+bool instantiate_list_items(const Array &p_presets, const Ref<RiveFile> &p_file, Array &r_items) {
+    if (p_presets.size() > 1000) return false;
+    for (int i = 0; i < p_presets.size(); ++i) {
+        const Ref<RiveViewModelPreset> preset = p_presets[i];
+        if (preset.is_null()) return false;
+        const auto item = preset->instantiate(p_file);
+        if (item.is_null()) return false;
+        r_items.push_back(item);
+    }
+    return true;
+}
+
+bool apply_list_presets(const Ref<RiveViewModelInstance> &p_vm, const Dictionary &p_values, const Ref<RiveFile> &p_file) {
+    Array paths = p_values.keys();
+    paths.sort();
+    for (int i = 0; i < paths.size(); ++i) {
+        const Variant value = p_values[paths[i]];
+        if (value.get_type() != Variant::ARRAY) continue;
+        Array items;
+        if (p_vm.is_null() || !instantiate_list_items(value, p_file, items) || !p_vm->set_property_value(paths[i], items)) return false;
+    }
+    return true;
 }
 
 void collect_presets(const Variant &p_value, std::vector<Ref<RiveViewModelPreset>> &p_presets,
@@ -652,6 +680,7 @@ void RiveControl::_update_preset_connections() {
     std::vector<Ref<RiveViewModelPreset>> next;
     int count = 0;
     if (view_model_preset.is_valid()) collect_presets(view_model_preset, next, 0, count);
+    collect_presets(property_values, next, 0, count);
     const Callable callback(this, "_on_preset_changed");
     for (const Ref<RiveViewModelPreset> &preset : preset_subscriptions) {
         if (std::find(next.begin(), next.end(), preset) == next.end() && preset->is_connected("changed", callback)) {
@@ -739,6 +768,9 @@ Error RiveControl::load_file()
     if (preset_vm.is_valid() && !player->bind_view_model(preset_vm)) {
         return _fail_load(ERR_INVALID_DATA, "Failed to bind the ViewModel preset.");
     }
+    if (!apply_list_presets(player->get_rive_view_model_instance(), property_values, rive_file)) {
+        return _fail_load(ERR_INVALID_DATA, "A saved ViewModel list contains invalid item presets or an incompatible property path.");
+    }
     loading = true;
     _disconnect_player_signals(rive_player);
     rive_player = player;
@@ -822,7 +854,7 @@ void RiveControl::set_property_values(const Dictionary &p_values) {
             return;
         }
         if (!is_persistent_override(p_values[keys[i]])) {
-            WARN_PRINT("RiveControl overrides require scene-serializable values. Use the ViewModel wrapper API for nonempty lists or runtime font handles.");
+            WARN_PRINT("RiveControl overrides require scene-serializable values. Use item presets for saved lists and the ViewModel API for runtime handles.");
             return;
         }
         const String path = RiveViewModelInstance::canonicalize_property_path(String(key));
@@ -836,6 +868,18 @@ void RiveControl::set_property_values(const Dictionary &p_values) {
         }
         normalized_values[path] = p_values[key];
     }
+    if (rive_player.is_valid() && rive_player->get_artboard()) {
+        bool has_lists = false;
+        for (int i = 0; i < keys.size(); ++i) has_lists |= p_values[keys[i]].get_type() == Variant::ARRAY;
+        if (has_lists) {
+            const auto candidate = view_model_preset.is_valid() ? view_model_preset->instantiate(rive_file, artboard_name) :
+                    rive_file->instantiate_view_model_for_artboard(artboard_name);
+            if (!apply_list_presets(candidate, normalized_values, rive_file)) {
+                WARN_PRINT("Invalid saved list presets: overrides were not changed.");
+                return;
+            }
+        }
+    }
     const Dictionary previous_values = property_values;
     bool removed_override = false;
     const Array previous_keys = previous_values.keys();
@@ -846,10 +890,12 @@ void RiveControl::set_property_values(const Dictionary &p_values) {
         }
     }
     rive_integration::assign_deep_dictionary_copy(property_values, normalized_values);
+    _update_preset_connections();
     if (removed_override && rive_file.is_valid() && rive_player.is_valid() && rive_player->get_artboard()) {
         if (load_file() != OK) {
             if (ObjectDB::get_instance(self_id) != this) return;
             property_values = previous_values;
+            _update_preset_connections();
         }
     } else {
         _apply_property_values();
@@ -1307,6 +1353,10 @@ bool RiveControl::_apply_property_value(const String &p_path, const Variant &p_v
         return true;
     }
 
+    if (p_value.get_type() == Variant::ARRAY) {
+        Array items;
+        return instantiate_list_items(p_value, rive_file, items) && vm->set_property_value(path, items);
+    }
     return vm->set_property_value(path, p_value);
 }
 
@@ -1329,6 +1379,9 @@ bool RiveControl::set_property_value(const String &p_property_path, const Varian
     }
     _invalidate_rive();
     emit_signal("property_values_changed");
+    if (ObjectDB::get_instance(self_id) != this) return true;
+    _update_preset_connections();
+    _refresh_property_schema();
     return true;
 }
 

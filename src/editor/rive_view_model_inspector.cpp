@@ -6,6 +6,8 @@
 #include <godot_cpp/classes/check_box.hpp>
 #include <godot_cpp/classes/color_picker_button.hpp>
 #include <godot_cpp/classes/option_button.hpp>
+#include <godot_cpp/classes/menu_button.hpp>
+#include <godot_cpp/classes/popup_menu.hpp>
 #include <godot_cpp/classes/editor_interface.hpp>
 #include <godot_cpp/classes/editor_inspector.hpp>
 #include <godot_cpp/classes/theme.hpp>
@@ -67,10 +69,16 @@ void RiveViewModelInspector::_bind_methods() {
     ClassDB::bind_method(D_METHOD("_on_resource_changed", "resource", "path"), &RiveViewModelInspector::_on_resource_changed);
     ClassDB::bind_method(D_METHOD("_on_resource_selected", "resource", "inspect"), &RiveViewModelInspector::_on_resource_selected);
     ClassDB::bind_method(D_METHOD("_on_clear_list", "path"), &RiveViewModelInspector::_on_clear_list);
+    ClassDB::bind_method(D_METHOD("_on_add_list_item", "choice", "path", "choices"), &RiveViewModelInspector::_on_add_list_item);
+    ClassDB::bind_method(D_METHOD("_on_list_item_button", "item", "column", "button", "mouse_button", "tree"), &RiveViewModelInspector::_on_list_item_button);
+    ClassDB::bind_method(D_METHOD("_get_list_drag_data", "position", "tree"), &RiveViewModelInspector::_get_list_drag_data);
+    ClassDB::bind_method(D_METHOD("_can_drop_list_data", "position", "data", "tree"), &RiveViewModelInspector::_can_drop_list_data);
+    ClassDB::bind_method(D_METHOD("_drop_list_data", "position", "data", "tree"), &RiveViewModelInspector::_drop_list_data);
     ClassDB::bind_method(D_METHOD("_on_trigger_fired", "path"), &RiveViewModelInspector::_on_trigger_fired);
 }
 
 void RiveViewModelInspector::set_rive_control(RiveControl *p_control) {
+    edit_error = String();
     const Callable refresh_callback(this, "_queue_refresh");
     if (RiveControl *previous = _get_control()) {
         if (previous->is_connected("property_values_changed", refresh_callback)) {
@@ -147,6 +155,7 @@ void RiveViewModelInspector::_collect_properties(rive::ViewModelInstance *vm, St
 }
 
 void RiveViewModelInspector::_update_ui() {
+    ++ui_revision;
     while (get_child_count() > 0) {
         Node *child = get_child(0);
         remove_child(child);
@@ -184,6 +193,13 @@ void RiveViewModelInspector::_update_ui() {
         header->add_theme_font_override("font", EditorInterface::get_singleton()->get_editor_theme()->get_font("bold", "EditorFonts"));
     }
     add_child(header);
+    if (!edit_error.is_empty()) {
+        Label *error = memnew(Label);
+        error->set_text(edit_error);
+        error->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
+        error->add_theme_color_override("font_color", Color(1, 0.5, 0.4));
+        add_child(error);
+    }
 
     if (all_props.empty()) {
         Label *empty = memnew(Label);
@@ -389,15 +405,67 @@ void RiveViewModelInspector::_update_ui() {
             const size_t count = value->as<rive::ViewModelInstanceList>()->listItems().size();
             Label *summary = memnew(Label);
             summary->set_text(String::num_int64(count) + " items");
-            summary->set_tooltip_text(count == 0 ? "Empty ViewModel list. Use its script API to append a compatible existing ViewModel instance." : "List item properties are displayed below as list[index].property.");
+            summary->set_tooltip_text("Drag list rows to reorder. Changes are saved in the scene as item presets.");
             summary->set_h_size_flags(Control::SIZE_EXPAND_FILL);
             row->add_child(summary);
+            MenuButton *add = memnew(MenuButton);
+            add->set_text("Add...");
+            Array choices;
+            const Ref<RiveFile> file = control->get_rive_file();
+            const PackedStringArray models = file->get_view_model_names();
+            for (int model_index = 0; model_index < models.size(); ++model_index) {
+                const PackedStringArray instances = file->get_view_model_instance_names(models[model_index]);
+                for (int index = 0; index <= instances.size(); ++index) {
+                    Dictionary choice;
+                    choice["model"] = models[model_index];
+                    choice["index"] = index < instances.size() ? index : -1;
+                    choice["blank"] = index == instances.size();
+                    add->get_popup()->add_item(models[model_index] + String(" / ") + (index < instances.size() ? instances[index] : String("<Blank>")), choices.size());
+                    choices.push_back(choice);
+                }
+            }
+            add->set_disabled(choices.is_empty() || count >= 1000);
+            add->get_popup()->connect("id_pressed", Callable(this, "_on_add_list_item").bind(path, choices));
+            row->add_child(add);
             Button *clear = memnew(Button);
             clear->set_text("Clear");
             clear->set_disabled(count == 0);
             clear->set_tooltip_text("Remove all ViewModel list items (undoable).");
             clear->connect("pressed", Callable(this, "_on_clear_list").bind(path));
             row->add_child(clear);
+
+            Tree *tree = memnew(Tree);
+            tree->set_hide_root(true);
+            tree->set_h_scroll_enabled(false);
+            tree->set_column_clip_content(0, true);
+            tree->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+            const double editor_scale = EditorInterface::get_singleton() ? EditorInterface::get_singleton()->get_editor_scale() : 1.0;
+            tree->set_custom_minimum_size(Size2(0, std::clamp<double>(count * 32 + 24, 48, 224) * editor_scale));
+            tree->set_drop_mode_flags(Tree::DROP_MODE_INBETWEEN);
+            tree->set_meta("rive_list_path", RiveViewModelInstance::canonicalize_property_path(path));
+            tree->set_meta("rive_ui_revision", ui_revision);
+            tree->set_tooltip_text("Drag rows to reorder. Use the row buttons to duplicate, remove, or move an item.");
+            tree->set_drag_forwarding(Callable(this, "_get_list_drag_data").bind(tree),
+                    Callable(this, "_can_drop_list_data").bind(tree), Callable(this, "_drop_list_data").bind(tree));
+            tree->connect("button_clicked", Callable(this, "_on_list_item_button").bind(tree));
+            TreeItem *root = tree->create_item();
+            const auto list = control->get_view_model_instance()->get_list_property(path);
+            const Ref<Theme> theme = EditorInterface::get_singleton() ? EditorInterface::get_singleton()->get_editor_theme() : Ref<Theme>();
+            static const char *icons[] = {"Duplicate", "Remove", "MoveUp", "MoveDown"};
+            static const char *tooltips[] = {"Duplicate item", "Remove item", "Move up", "Move down"};
+            for (size_t index = 0; index < count; ++index) {
+                TreeItem *item = tree->create_item(root);
+                const auto instance = list->get_item(index);
+                item->set_text(0, "[" + String::num_int64(index) + "] " + (instance.is_valid() ? instance->get_view_model_name() + " / " + instance->get_name() : String("<Missing>")));
+                item->set_metadata(0, index);
+                for (int button = 0; button < 4; ++button) {
+                    if (theme.is_valid() && theme->has_icon(icons[button], "EditorIcons")) {
+                        item->add_button(0, theme->get_icon(icons[button], "EditorIcons"), button,
+                                (button == 2 && index == 0) || (button == 3 && index + 1 == count), tooltips[button]);
+                    }
+                }
+            }
+            add_child(tree);
         }
         else if (value->is<rive::ViewModelInstanceAssetBlob>() || value->is<rive::ViewModelInstanceSymbolListIndex>()) {
             Label *summary = memnew(Label);
@@ -544,24 +612,157 @@ void RiveViewModelInspector::_on_resource_selected(Ref<Resource> resource, bool 
 }
 
 void RiveViewModelInspector::_on_clear_list(String path) {
-    path = RiveViewModelInstance::canonicalize_property_path(path);
+    _commit_list(path, Array());
+}
+
+bool RiveViewModelInspector::_snapshot_list(const String &p_path, Array &r_items) {
+    RiveControl *control = _get_control();
+    const auto vm = control ? control->get_view_model_instance() : Ref<RiveViewModelInstance>();
+    const auto list = vm.is_valid() ? vm->get_list_property(p_path) : Ref<RiveViewModelList>();
+    if (list.is_null() || list->get_size() > 1000) return false;
+    for (int index = 0; index < list->get_size(); ++index) {
+        auto preset = RiveViewModelPreset::_capture_instance(list->get_item(index), vm, p_path + String(".") + String::num_int64(index));
+        if (preset.is_null() || preset->instantiate(control->get_rive_file()).is_null()) {
+            edit_error = "This list contains a cyclic, oversized, or runtime-only value that cannot be saved as an item preset.";
+            _queue_refresh();
+            return false;
+        }
+        r_items.push_back(preset);
+    }
+    return true;
+}
+
+void RiveViewModelInspector::_commit_list(const String &p_path, const Array &p_items) {
+    const String path = RiveViewModelInstance::canonicalize_property_path(p_path);
     if (RiveControl *control = _get_control()) {
         Dictionary values = control->get_property_values().duplicate(true);
         Array keys = values.keys();
         for (int index = 0; index < keys.size(); ++index) {
             String key = keys[index];
-            if (key.begins_with(path + "[") || key.begins_with(path + ".")) {
+            if (key.begins_with(path + String("[")) || key.begins_with(path + String("."))) {
                 values.erase(key);
             }
         }
-        values[path] = Array();
-        _commit_values(values, path);
+        values[path] = p_items;
+        edit_error = String();
+        _commit_values(values, path, false);
     }
     _queue_refresh();
 }
 
+void RiveViewModelInspector::_on_add_list_item(int p_choice, String p_path, Array p_choices) {
+    RiveControl *control = _get_control();
+    if (!control || p_choice < 0 || p_choice >= p_choices.size()) return;
+    const Dictionary choice = p_choices[p_choice];
+    Ref<RiveViewModelPreset> item;
+    item.instantiate();
+    item->set_view_model_name(choice["model"]);
+    item->set_instance_index(choice["index"]);
+    item->set_blank(choice["blank"]);
+    if (item->instantiate(control->get_rive_file()).is_null()) {
+        edit_error = "The selected ViewModel cannot be instantiated safely.";
+        _queue_refresh();
+        return;
+    }
+    Array items;
+    if (!_snapshot_list(p_path, items) || items.size() >= 1000) return;
+    items.push_back(item);
+    _commit_list(p_path, items);
+}
+
+void RiveViewModelInspector::_on_list_item_button(TreeItem *p_item, int p_column, int p_button, int p_mouse_button, Tree *p_tree) {
+    if (!p_item || !p_tree || p_tree->get_parent() != this || uint64_t(p_tree->get_meta("rive_ui_revision")) != ui_revision) return;
+    const String path = p_tree->get_meta("rive_list_path");
+    const int index = p_item->get_metadata(0);
+    Array items;
+    if (!_snapshot_list(path, items) || index < 0 || index >= items.size()) return;
+    if (p_button == 0 && items.size() < 1000) {
+        const auto vm = _get_control()->get_view_model_instance();
+        const auto list = vm->get_list_property(path);
+        const auto duplicate = RiveViewModelPreset::_capture_instance(list->get_item(index), vm, path + String(".") + String::num_int64(index));
+        if (duplicate.is_null()) return;
+        items.insert(index + 1, duplicate);
+    }
+    else if (p_button == 1) items.remove_at(index);
+    else if ((p_button == 2 && index > 0) || (p_button == 3 && index + 1 < items.size())) {
+        const int destination = index + (p_button == 2 ? -1 : 1);
+        const Variant item = items[index];
+        items.remove_at(index);
+        items.insert(destination, item);
+    } else return;
+    _commit_list(path, items);
+}
+
+Variant RiveViewModelInspector::_get_list_drag_data(Vector2 p_position, Tree *p_tree) {
+    RiveControl *control = _get_control();
+    if (!control || !p_tree || p_tree->get_parent() != this) return Variant();
+    TreeItem *item = p_tree->get_item_at_position(p_position);
+    if (!item) return Variant();
+    const String path = p_tree->get_meta("rive_list_path");
+    const auto list = control->get_view_model_instance()->get_list_property(path);
+    const int index = item->get_metadata(0);
+    if (list.is_null() || uint64_t(p_tree->get_meta("rive_ui_revision")) != ui_revision) return Variant();
+    Dictionary data;
+    data["type"] = "rive_view_model_list_item";
+    data["inspector"] = get_instance_id();
+    data["tree"] = p_tree->get_instance_id();
+    data["revision"] = ui_revision;
+    data["path"] = path;
+    data["index"] = index;
+    data["item"] = list->get_item(index);
+    Label *preview = memnew(Label);
+    preview->set_text(item->get_text(0));
+    p_tree->set_drag_preview(preview);
+    return data;
+}
+
+int RiveViewModelInspector::_get_list_drop_index(Vector2 p_position, const Variant &p_data, Tree *p_tree) const {
+    if (!p_tree || p_tree->get_parent() != this || p_data.get_type() != Variant::DICTIONARY) return -1;
+    const Dictionary data = p_data;
+    for (const char *field : {"inspector", "tree", "revision", "index"}) {
+        if (data.get(field, Variant()).get_type() != Variant::INT) return -1;
+    }
+    if (String(data.get("type", String())) != "rive_view_model_list_item" ||
+            uint64_t(data.get("inspector", 0)) != get_instance_id() ||
+            uint64_t(data.get("tree", 0)) != p_tree->get_instance_id() ||
+            uint64_t(data.get("revision", 0)) != ui_revision ||
+            data.get("path", String()) != p_tree->get_meta("rive_list_path")) return -1;
+    RiveControl *control = _get_control();
+    const auto vm = control ? control->get_view_model_instance() : Ref<RiveViewModelInstance>();
+    const auto list = vm.is_valid() ? vm->get_list_property(data["path"]) : Ref<RiveViewModelList>();
+    const int64_t from = data.get("index", -1);
+    if (list.is_null() || from < 0 || from >= list->get_size()) return -1;
+    const Ref<RiveViewModelInstance> source = data.get("item", Variant());
+    const auto current = list.is_valid() ? list->get_item(from) : Ref<RiveViewModelInstance>();
+    if (source.is_null() || current.is_null() || source->_get_native_instance() != current->_get_native_instance()) return -1;
+    TreeItem *target = p_tree->get_item_at_position(p_position);
+    const int section = p_tree->get_drop_section_at_position(p_position);
+    if (!target || (section != -1 && section != 1)) return -1;
+    int destination = int(target->get_metadata(0)) + (section == 1 ? 1 : 0);
+    if (from < destination) --destination;
+    return destination == from || destination < 0 || destination >= list->get_size() ? -1 : destination;
+}
+
+bool RiveViewModelInspector::_can_drop_list_data(Vector2 p_position, Variant p_data, Tree *p_tree) {
+    return _get_list_drop_index(p_position, p_data, p_tree) >= 0;
+}
+
+void RiveViewModelInspector::_drop_list_data(Vector2 p_position, Variant p_data, Tree *p_tree) {
+    const int destination = _get_list_drop_index(p_position, p_data, p_tree);
+    if (destination < 0) return;
+    const Dictionary data = p_data;
+    Array items;
+    if (!_snapshot_list(data["path"], items)) return;
+    const int from = data["index"];
+    const Variant item = items[from];
+    items.remove_at(from);
+    items.insert(destination, item);
+    _commit_list(data["path"], items);
+}
+
 void RiveViewModelInspector::_queue_refresh() {
     if (!applying_edit && !refresh_queued) {
+        ++ui_revision;
         refresh_queued = true;
         call_deferred("_refresh");
     }
@@ -584,7 +785,7 @@ void RiveViewModelInspector::_commit_value(const String &path, const Variant &va
     }
 }
 
-void RiveViewModelInspector::_commit_values(const Dictionary &values, const String &path) {
+void RiveViewModelInspector::_commit_values(const Dictionary &values, const String &path, bool p_merge) {
     RiveControl *control = _get_control();
     if (!control) return;
 
@@ -595,7 +796,7 @@ void RiveViewModelInspector::_commit_values(const Dictionary &values, const Stri
     EditorUndoRedoManager *undo_redo = editor ? editor->get_editor_undo_redo() : nullptr;
     if (undo_redo) {
         const String action_name = "Set Rive " + path + " (" + String::num_uint64(control->get_instance_id()) + ")";
-        undo_redo->create_action(action_name, UndoRedo::MERGE_ENDS, control);
+        undo_redo->create_action(action_name, p_merge ? UndoRedo::MERGE_ENDS : UndoRedo::MERGE_DISABLE, control);
         undo_redo->add_do_method(control, "set_property_values", updated);
         undo_redo->add_undo_method(control, "set_property_values", previous);
         undo_redo->commit_action();

@@ -20,7 +20,7 @@ https://github.com/user-attachments/assets/615cefe9-f9ba-4821-b8d4-bf70510b7d0c
 - **Godot nodes**: `RiveControl` for UI; `RiveCanvas2D` with `RiveFileInstance` / `RiveMultiInstance` for 2D scenes; `RiveRaw` for custom vector drawing.
 - **Resources**: `.riv` import and hot reload, optional SVG import, Godot textures and fonts, and external asset loading helpers.
 - **Rive playback**: Animations, state machines, events, responsive layout, mixing and cross-fades.
-- **Data binding**: Nested ViewModels, scalar and resource properties, lists, reusable presets, and Inspector editing with Undo/Redo.
+- **Data binding**: Nested ViewModels, scalar and resource properties, lists, reusable presets, and Inspector editing with Undo/Redo. Lists support adding, duplication, removal and drag reordering.
 - **Input and helpers**: Pointer, touch, keyboard, gamepad, text selection / IME, component followers and an optional accessibility bridge.
 - **Optional backends**: Godot audio bus routing and Rive-signed Luau scripts.
 
@@ -66,7 +66,6 @@ The demo's modified robot head is based on the [Godot logo](https://github.com/g
 
 - [ ] Android device testing and linear color-space support; iOS and Web support.
 - [ ] Richer preset editing and more vector drawing commands.
-- [ ] Inspector list creation and drag reordering.
 - [ ] Cross-Control batching and mobile performance testing.
 - [ ] More examples and API documentation.
 
@@ -108,6 +107,7 @@ For desktop checks with a graphics display:
 ```bash
 godot --path project --rendering-method mobile --rendering-driver vulkan \
     --render-thread safe --script ../scripts/smoke_test.gd
+python3 scripts/run_inspector_smoke_test.py --godot <path-to-godot>
 ```
 
 Other regression suites are in [scripts/](scripts/); their setup is listed in the [CI workflow](.github/workflows/release.yml).

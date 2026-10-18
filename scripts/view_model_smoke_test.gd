@@ -193,6 +193,10 @@ func _test_fonts() -> void:
 	_check(property.get_value() == font, "Font wrapper lost FontFile")
 	_check(control.set_property_value("fontProperty", alternate), "Alternate font assignment failed")
 	_check(property.get_value() == alternate, "Alternate font was not retained")
+	var font_preset := RiveViewModelPreset.from_instance(control.get_view_model_instance())
+	if _check(font_preset != null, "Cannot capture a FontFile override in a preset"):
+		var captured := font_preset.instantiate(control.rive_file)
+		_check(captured != null and captured.get_font_property("fontProperty").get_value() == alternate, "Captured preset lost FontFile identity")
 	_check(not control.set_property_value("fontProperty", "invalid"), "Invalid font value accepted")
 	var runtime_font := RiveFont.new()
 	_check(runtime_font.load_from_buffer(font.data), "Runtime font decoding failed")
@@ -209,6 +213,40 @@ func _test_fonts() -> void:
 	_check(property.get_value() == alternate, "Font override lost after reload")
 	_check(control.set_property_value("fontProperty", null), "Null font clearing failed")
 	_check(property.get_value() == null, "Font was not cleared")
+	await _frames()
+
+func _test_saved_list_presets() -> void:
+	var control = _load_fixture("data_bind_test_cmdq.riv", "Test List")
+	if control == null:
+		return
+	var vm = control.get_view_model_instance()
+	var list = vm.get_list_property("Test List")
+	var original_size: int = list.get_size()
+	var item := RiveViewModelPreset.from_instance(list.get_item(0))
+	if not _check(item != null, "Cannot capture a serializable list item"):
+		return
+	item.values = {"Color": Color.CYAN}
+	_check(control.set_property_value("Test List", [item]), "Control rejected a saved list item preset")
+	_check(control.get_property_value("Test List[0].Color").is_equal_approx(Color.CYAN), "Saved list preset did not apply")
+	_check(control.load_file() == OK and control.get_property_value("Test List[0].Color").is_equal_approx(Color.CYAN), "Saved list preset did not replay")
+	item.values = {"Color": Color.MAGENTA}
+	_check(control.get_property_value("Test List[0].Color").is_equal_approx(Color.MAGENTA), "List item Resource changes were not observed")
+	var before: Dictionary = control.get_property_values()
+	var previous_vm = control.get_view_model_instance()
+	var invalid := RiveViewModelPreset.new()
+	invalid.view_model_name = "__missing__"
+	_check(not control.set_property_value("Test List", [invalid]), "Invalid list preset was accepted")
+	var rejected: Dictionary = before.duplicate(true)
+	rejected["Test List"] = [invalid]
+	rejected["Test Num"] = 999
+	control.set_property_values(rejected)
+	_check(control.get_property_values() == before and control.get_view_model_instance() == previous_vm, "Rejected list presets partially replaced stored or native state")
+	_check(control.set_property_value("Test List", []), "Cannot clear saved list presets")
+	var cleared_vm = control.get_view_model_instance()
+	item.values = {"Color": Color.GREEN}
+	_check(control.get_view_model_instance() == cleared_vm, "Removed list item retained its hot-reload subscription")
+	control.clear_property_override("Test List")
+	_check(control.get_view_model_instance().get_list_property("Test List").get_size() == original_size, "Reset did not restore the authored list")
 	await _frames()
 
 func _test_artboards() -> void:
@@ -339,6 +377,7 @@ func _run() -> void:
 		await _test_lists(control)
 	await _test_fonts()
 	await _test_artboards()
+	await _test_saved_list_presets()
 	await _test_scene_serialization()
 	for instance in controls:
 		instance.rive_file = null

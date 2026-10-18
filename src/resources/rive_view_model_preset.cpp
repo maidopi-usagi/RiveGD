@@ -5,6 +5,7 @@
 #include <algorithm>
 
 void RiveViewModelPreset::_bind_methods() {
+    ClassDB::bind_static_method(get_class_static(), D_METHOD("from_instance", "instance"), &RiveViewModelPreset::from_instance);
     ClassDB::bind_method(D_METHOD("set_view_model_name", "name"), &RiveViewModelPreset::set_view_model_name);
     ClassDB::bind_method(D_METHOD("get_view_model_name"), &RiveViewModelPreset::get_view_model_name);
     ClassDB::bind_method(D_METHOD("set_instance_name", "name"), &RiveViewModelPreset::set_instance_name);

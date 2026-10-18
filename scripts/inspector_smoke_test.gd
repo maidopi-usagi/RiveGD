@@ -1,13 +1,41 @@
-extends SceneTree
+@tool
+extends Node
 
 var failures: Array[String] = []
 var controls: Array[RiveControl] = []
 var inspectors: Array[Control] = []
 var fixture_root: String
+var test_window: Window
+var test_viewport: SubViewport
+var host: Control
 
-func _initialize() -> void:
-	fixture_root = ProjectSettings.globalize_path("res://").path_join(
-		"../third-party/rive-runtime/tests/unit_tests/assets")
+func _ready() -> void:
+	var args := OS.get_cmdline_user_args()
+	if args.size() != 1:
+		push_error("Run this suite with scripts/run_inspector_smoke_test.py")
+		get_tree().quit(2)
+		return
+	fixture_root = args[0]
+	test_window = Window.new()
+	test_window.title = "Rive Inspector regression"
+	test_window.size = Vector2i(600, 720)
+	add_child(test_window)
+	test_viewport = SubViewport.new()
+	test_viewport.size = test_window.size
+	test_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	test_window.add_child(test_viewport)
+	host = Control.new()
+	host.theme = EditorInterface.get_editor_theme()
+	test_viewport.add_child(host)
+	host.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var preview := TextureRect.new()
+	preview.texture = test_viewport.get_texture()
+	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	test_window.add_child(preview)
+	preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	test_viewport.notify_mouse_entered()
+	test_window.popup_centered()
 	call_deferred("_run")
 
 func _check(condition: bool, message: String) -> bool:
@@ -18,13 +46,41 @@ func _check(condition: bool, message: String) -> bool:
 
 func _frames(count := 2) -> void:
 	for _i in count:
-		await process_frame
+		await get_tree().process_frame
+
+func _wait_for_editor_idle() -> void:
+	var idle_frames := 0
+	while idle_frames < 8:
+		await get_tree().process_frame
+		idle_frames = 0 if EditorInterface.get_resource_filesystem().is_scanning() else idle_frames + 1
+
+func _confirm_editor_exit() -> void:
+	for _frame in 120:
+		await get_tree().process_frame
+		var pending: Array[Node] = [get_tree().root]
+		while not pending.is_empty():
+			var node: Node = pending.pop_back()
+			if node is ConfirmationDialog and node.visible:
+				node.confirmed.emit.call_deferred()
+				break
+			pending.append_array(node.get_children(true))
+
+func _close_editor() -> void:
+	var editor: Node = EditorInterface.get_base_control()
+	while editor != null and editor.get_class() != "EditorNode":
+		editor = editor.get_parent()
+	if not _check(editor != null, "Cannot find the editor lifecycle owner"):
+		get_tree().quit(1)
+		return
+	editor.notification.call_deferred(NOTIFICATION_WM_CLOSE_REQUEST)
+	_confirm_editor_exit.call_deferred()
 
 func _load_fixture(file_name: String, property_name: String):
 	var control = RiveControl.new()
 	controls.append(control)
 	control.size = Vector2(128, 128)
-	root.add_child(control)
+	control.update_mode = RiveControl.UPDATE_MANUAL
+	host.add_child(control)
 	var file := RiveFile.new()
 	file.data = FileAccess.get_file_as_bytes(fixture_root.path_join(file_name))
 	if not _check(not file.data.is_empty(), "Missing fixture: " + file_name):
@@ -51,7 +107,12 @@ func _new_inspector(control):
 			inspector.free()
 		return null
 	inspectors.append(inspector)
-	root.add_child(inspector)
+	for previous in inspectors:
+		previous.hide()
+	host.add_child(inspector)
+	inspector.position = Vector2(12, 12)
+	inspector.size.x = 570
+	inspector.show()
 	inspector.set_rive_control(control)
 	return inspector
 
@@ -87,6 +148,145 @@ func _editor_for(inspector, control, path: String, editor_class: String):
 func _history(control):
 	var manager = EditorInterface.get_editor_undo_redo()
 	return manager.get_history_undo_redo(manager.get_object_history_id(control))
+
+func _list_tree(inspector, control, path: String) -> Tree:
+	_find_row(inspector, control, path)
+	for child in inspector.get_children():
+		if child is Tree and child.get_meta("rive_list_path", "") == path:
+			return child
+	_check(false, "Missing list structure editor: " + path)
+	return null
+
+func _list_colors(control) -> Array[Color]:
+	var colors: Array[Color] = []
+	var list = control.get_view_model_instance().get_list_property("Test List")
+	for index in list.get_size():
+		colors.append(list.get_item(index).get_property_value("Color"))
+	return colors
+
+func _mouse_button(position: Vector2, pressed: bool) -> void:
+	var event := InputEventMouseButton.new()
+	event.position = position
+	event.global_position = position
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0
+	event.pressed = pressed
+	test_viewport.push_input(event, true)
+
+func _mouse_motion(position: Vector2, relative: Vector2) -> void:
+	var event := InputEventMouseMotion.new()
+	event.position = position
+	event.global_position = position
+	event.relative = relative
+	event.button_mask = MOUSE_BUTTON_MASK_LEFT
+	test_viewport.push_input(event, true)
+
+func _test_list_editor() -> void:
+	var failures_before := failures.size()
+	var control = _load_fixture("data_bind_test_cmdq.riv", "Test List")
+	if control == null:
+		return
+	var inspector = _new_inspector(control)
+	var original := _list_colors(control)
+	var add = _editor_for(inspector, control, "Test List", "MenuButton")
+	if add == null or original.is_empty():
+		return
+	var model: String = control.get_view_model_instance().get_list_property("Test List").get_item(0).get_view_model_name()
+	var popup: PopupMenu = add.get_popup()
+	var choice := -1
+	for index in popup.item_count:
+		if popup.get_item_text(index) == model + " / <Blank>":
+			choice = popup.get_item_id(index)
+	if not _check(choice >= 0, "List Add menu omitted a blank instance of its item model"):
+		return
+	popup.emit_signal("id_pressed", choice)
+	await _frames(3)
+	_check(_list_colors(control).size() == original.size() + 1, "Add did not append a new list item")
+	var history = _history(control)
+	history.undo()
+	await _frames(3)
+	_check(_list_colors(control) == original, "Add Undo did not restore the authored list")
+	history.redo()
+	await _frames(3)
+	_check(_list_colors(control).size() == original.size() + 1, "Add Redo did not restore the new item")
+	var color = _editor_for(inspector, control, "Test List[0].Color", "ColorPickerButton")
+	if color == null:
+		return
+	color.emit_signal("color_changed", Color.MAGENTA)
+	await _frames(3)
+	var tree := _list_tree(inspector, control, "Test List")
+	if tree == null:
+		return
+	await _frames(3)
+	var before := _list_colors(control)
+	var first: TreeItem = tree.get_root().get_first_child()
+	var second: TreeItem = first.get_next()
+	var source_rect := tree.get_item_area_rect(first)
+	var target_rect := tree.get_item_area_rect(second)
+	var source := tree.global_position + Vector2(18, source_rect.position.y + source_rect.size.y * 0.5)
+	var target := tree.global_position + Vector2(18, target_rect.position.y + target_rect.size.y * 0.75)
+	_mouse_button(source, true)
+	_mouse_motion(source + Vector2(14, 0), Vector2(14, 0))
+	await _frames(2)
+	_mouse_motion(target, target - source - Vector2(14, 0))
+	_check(test_viewport.gui_is_dragging(), "Actual mouse motion did not start a list drag")
+	var payload: Variant = test_viewport.gui_get_drag_data()
+	_check(payload is Dictionary and payload.get("type", "") == "rive_view_model_list_item", "List drag used the wrong payload")
+	_check(inspector.call("_can_drop_list_data", target - inspector.position - tree.position, payload, tree), "List rejected a valid in-list reorder")
+	_check(not inspector.call("_can_drop_list_data", Vector2.ZERO, {"type": "files"}, tree), "List accepted an unrelated drag")
+	if payload is Dictionary:
+		var foreign: Dictionary = payload.duplicate()
+		foreign["inspector"] = 0
+		_check(not inspector.call("_can_drop_list_data", target - tree.global_position, foreign, tree), "List accepted another Inspector's drag")
+		var stale: Dictionary = payload.duplicate()
+		stale["revision"] = -1
+		_check(not inspector.call("_can_drop_list_data", target - tree.global_position, stale, tree), "List accepted a stale drag")
+	_mouse_button(target, false)
+	await _frames(4)
+	_check(test_viewport.gui_is_drag_successful(), "Viewport did not deliver the list drop")
+	var reordered := before.duplicate()
+	reordered[0] = before[1]
+	reordered[1] = before[0]
+	_check(_list_colors(control) == reordered, "Drag reorder did not move the item and its edited values")
+	_check(not control.has_property_override("Test List[0].Color"), "Reorder retained a stale index-specific override")
+	history.undo()
+	await _frames(3)
+	_check(_list_colors(control) == before, "Reorder Undo did not restore item state and order")
+	history.redo()
+	await _frames(3)
+	_check(_list_colors(control) == reordered, "Reorder Redo did not restore item state and order")
+	tree = _list_tree(inspector, control, "Test List")
+	var first_item: TreeItem = tree.get_root().get_first_child()
+	_check(first_item.get_button_count(0) == 4, "List row omitted duplicate/remove/move buttons")
+	tree.emit_signal("button_clicked", first_item, 0, 0, MOUSE_BUTTON_LEFT)
+	await _frames(3)
+	var duplicated := _list_colors(control)
+	_check(duplicated.size() == reordered.size() + 1 and duplicated[0] == duplicated[1], "Duplicate did not copy the selected item")
+	tree = _list_tree(inspector, control, "Test List")
+	tree.emit_signal("button_clicked", tree.get_root().get_first_child(), 0, 1, MOUSE_BUTTON_LEFT)
+	await _frames(3)
+	_check(_list_colors(control) == reordered, "Remove deleted the wrong item")
+	tree = _list_tree(inspector, control, "Test List")
+	tree.emit_signal("button_clicked", tree.get_root().get_first_child(), 0, 3, MOUSE_BUTTON_LEFT)
+	await _frames(3)
+	_check(_list_colors(control) == before, "Move-down button did not preserve item values")
+	tree = _list_tree(inspector, control, "Test List")
+	tree.emit_signal("button_clicked", tree.get_root().get_first_child().get_next(), 0, 2, MOUSE_BUTTON_LEFT)
+	await _frames(3)
+	_check(_list_colors(control) == reordered, "Move-up button did not restore the order")
+	_check(control.load_file() == OK and _list_colors(control) == reordered, "List structure changed after reload")
+	var packed := PackedScene.new()
+	var path := "user://rivegd-inspector-list-%d.tscn" % Time.get_ticks_usec()
+	_check(packed.pack(control) == OK and ResourceSaver.save(packed, path) == OK, "Cannot save list editor scene")
+	var saved := ResourceLoader.load(path, "PackedScene", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
+	if _check(saved != null, "Cannot reload list editor scene"):
+		var restored := saved.instantiate() as RiveControl
+		controls.append(restored)
+		host.add_child(restored)
+		_check(_list_colors(restored) == reordered, "Saved scene lost the edited list structure or item values")
+	_check(DirAccess.remove_absolute(ProjectSettings.globalize_path(path)) == OK, "Cannot remove the test-owned scene")
+	if failures.size() == failures_before:
+		print("RIVE_INSPECTOR_LIST_EDITOR_PASS: add, real mouse drag, duplicate/remove, Undo/Redo, reload and serialization")
 
 func _test_enum_image_list(control, inspector) -> void:
 	var default_enum: int = control.get_view_model_instance().get_enum_property("Test Enum").get_value()
@@ -205,9 +405,9 @@ func _test_artboard() -> void:
 			_check(control.get_view_model_instance().get_artboard_property("ab").get_value() == "ch1", "Artboard picker did not apply chosen asset")
 
 func _run() -> void:
-	await process_frame
+	await get_tree().process_frame
 	if not _check(Engine.is_editor_hint() and ClassDB.class_exists("RiveViewModelInspector"), "This smoke test requires --editor"):
-		quit(1)
+		get_tree().quit(1)
 		return
 	var control = _load_fixture("data_bind_test_cmdq.riv", "Test Enum")
 	if control != null:
@@ -216,18 +416,22 @@ func _run() -> void:
 			await _test_enum_image_list(control, inspector)
 	await _test_font()
 	await _test_artboard()
+	await _test_list_editor()
 	for inspector in inspectors:
 		inspector.set_rive_control(null)
 		inspector.queue_free()
 	inspectors.clear()
 	for instance in controls:
+		var manager := EditorInterface.get_editor_undo_redo()
+		manager.clear_history(manager.get_object_history_id(instance), false)
 		instance.rive_file = null
 		instance.queue_free()
 	controls.clear()
+	test_window.queue_free()
 	await _frames()
+	await _wait_for_editor_idle()
 	if failures.is_empty():
 		print("RIVE_INSPECTOR_SMOKE_PASS: enum, image, list children, font, artboard, Undo and Redo")
-		quit(0)
 	else:
 		print("RIVE_INSPECTOR_SMOKE_FAIL: ", failures.size(), " assertions")
-		quit(1)
+	_close_editor.call_deferred()

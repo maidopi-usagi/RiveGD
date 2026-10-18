@@ -588,6 +588,15 @@ jobs:
             exit 1
           fi
 
+      - name: Run native Inspector and persistent list editing regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 120s xvfb-run --auto-servernum python3 scripts/run_inspector_smoke_test.py \
+            --godot "$GODOT_BIN" --display-driver x11 \
+            --addon-path smoke-project/addons/godot-rive \
+            | tee godot-inspector-smoke.log
+
       - name: Run scene, binding, event, layout and texture integration regression
         shell: bash
         run: |

@@ -18,6 +18,9 @@ class RiveViewModelPreset : public Resource {
 protected:
     static void _bind_methods();
 public:
+    static Ref<RiveViewModelPreset> from_instance(const Ref<RiveViewModelInstance> &p_instance);
+    static Ref<RiveViewModelPreset> _capture_instance(const Ref<RiveViewModelInstance> &p_instance,
+            const Ref<RiveViewModelInstance> &p_property_root, const String &p_prefix);
     void set_view_model_name(const String &p_name);
     String get_view_model_name() const { return view_model_name; }
     void set_instance_name(const String &p_name);
