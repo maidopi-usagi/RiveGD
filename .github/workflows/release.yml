@@ -287,17 +287,16 @@ jobs:
       - name: Stage and validate exact artifact
         shell: bash
         env:
-          PLATFORM: ${{ matrix.config.platform }}
-          TARGET: ${{ matrix.target }}
-          ARCH: ${{ matrix.config.arch }}
+          RIVEGD_BUILD_PLATFORM: ${{ matrix.config.platform }}
+          RIVEGD_BUILD_TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
           addon_source="project/addons/godot-rive"
           addon_stage="staged/addons/godot-rive"
           configuration=debug
-          if test "$TARGET" = template_release; then configuration=release; fi
+          if test "$RIVEGD_BUILD_TARGET" = template_release; then configuration=release; fi
 
-          case "$PLATFORM" in
+          case "$RIVEGD_BUILD_PLATFORM" in
             linux)
               descriptor_key="linux.$configuration.x86_64"
               artifact="bin/libgodot-rive.linux.$configuration.x86_64.so"
@@ -315,20 +314,20 @@ jobs:
               artifact="bin/libgodot-rive.android.$configuration.arm64.so"
               ;;
             *)
-              echo "Unsupported platform: $PLATFORM" >&2
+              echo "Unsupported platform: $RIVEGD_BUILD_PLATFORM" >&2
               exit 1
               ;;
           esac
 
           test -e "$addon_source/$artifact"
-          if test "$PLATFORM" = macos; then
+          if test "$RIVEGD_BUILD_PLATFORM" = macos; then
             framework_binary="$addon_source/$artifact/libgodot-rive.macos.$configuration"
             test -s "$framework_binary"
             file "$framework_binary" | grep -q "Mach-O"
           else
             test -s "$addon_source/$artifact"
           fi
-          if test "$PLATFORM" = android; then
+          if test "$RIVEGD_BUILD_PLATFORM" = android; then
             ELF_ARTIFACT="$addon_source/$artifact" python - <<'PY'
           import os
           import subprocess
