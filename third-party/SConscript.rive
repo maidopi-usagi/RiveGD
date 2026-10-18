@@ -301,11 +301,12 @@ elif rive_env["platform"] in ["windows", "linux", "android"]:
                 else:
                     rive_env.Prepend(CPPPATH=[inc_dir, os.path.join(inc_dir, "vma")])
                 break
-        for lib_name in ("Lib", "lib"):
-            lib_dir = os.path.join(vulkan_sdk, lib_name)
-            if os.path.isdir(lib_dir):
-                rive_env.Append(LIBPATH=[lib_dir])
-                break
+        if rive_env["platform"] != "android":
+            for lib_name in ("Lib", "lib"):
+                lib_dir = os.path.join(vulkan_sdk, lib_name)
+                if os.path.isdir(lib_dir):
+                    rive_env.Append(LIBPATH=[lib_dir])
+                    break
 
     if rive_env["platform"] == "linux":
         rive_env.Append(LIBS=["dl"])

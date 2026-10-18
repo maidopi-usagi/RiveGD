@@ -457,7 +457,7 @@ void RiveViewModelInspector::_update_ui() {
                 TreeItem *item = tree->create_item(root);
                 const auto instance = list->get_item(index);
                 item->set_text(0, "[" + String::num_int64(index) + "] " + (instance.is_valid() ? instance->get_view_model_name() + " / " + instance->get_name() : String("<Missing>")));
-                item->set_metadata(0, index);
+                item->set_metadata(0, static_cast<int64_t>(index));
                 for (int button = 0; button < 4; ++button) {
                     if (theme.is_valid() && theme->has_icon(icons[button], "EditorIcons")) {
                         item->add_button(0, theme->get_icon(icons[button], "EditorIcons"), button,
